@@ -39,7 +39,7 @@ const sampleFor = (type, setup) => {
   });
 };
 
-const BUILD = { version: 7, date: "2026-10-03" };
+const BUILD = { version: 8, date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -628,7 +628,7 @@ function PaycheckLedger() {
       justLoaded.current = true;
       base.current = null;
       setEntries(SEED);
-      setStatus("This is a sample year of invented paychecks. Log one, change the forecast hours, or clear it all from Backup to start your own.");
+      setStatus("This is a sample year of invented paychecks. Change the setup, log one, or try the forecast. Start my own ledger clears it when you're ready.");
       setReady(true);
     };
     const fromDevice = () => {
