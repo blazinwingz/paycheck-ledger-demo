@@ -101,3 +101,5 @@
 @media (min-width:640px){.sm\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (min-width:640px){.sm\:grid-cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}}
 @media (min-width:640px){.sm\:p-6{padding:1.5rem}}
+@media (min-width:640px){.sm\:table-cell{display:table-cell}}
+@media (min-width:640px){.sm\:text-sm{font-size:.875rem;line-height:1.25rem}}

@@ -39,7 +39,7 @@ const sampleFor = (type, setup) => {
   });
 };
 
-const BUILD = { version: 8, date: "2026-10-03" };
+const BUILD = { version: 9, date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -978,7 +978,7 @@ function PaycheckLedger() {
             nextPayDate={nextPayDate} />
         )}
         {tab === "forecast" && (
-          <ForecastTab fc={fc} setFc={setFc} rows={rows} weekLog={weekLog} setWeekLog={setWeekLog}
+          <ForecastTab fc={fc} setFc={setFc} changeSetup={changeSetup} rows={rows} weekLog={weekLog} setWeekLog={setWeekLog}
             forecasts={forecasts} setForecasts={setForecasts}
             onLog={(entry) => { setEditing(entry); setTab("log"); }} />
         )}
@@ -1177,6 +1177,147 @@ function ReconStrip({ d }) {
         <span style={{ fontFamily: MONO }}>{ok ? money(0) : money(bal)}</span>
       </div>
     </div>
+  );
+}
+
+/* What if: try a different 401k, HSA, ESPP, savings or pay, and see what it
+   does to a check and to the year, side by side with today's setup. Nothing
+   changes until "Make this my setup". Most useful on salary, where every
+   regular check is the same and the question is what a change would do. */
+function WhatIfPanel({ fcCalc, f, changeSetup, setFc }) {
+  const salaried = PAY_TYPE === "salary";
+  const mine = () => ({
+    pay: salaried ? n(fcCalc.salary) : n(fcCalc.rate) || curRate(),
+    retire: SETUP.retire, retirePct: SETUP.retirePct,
+    hsa: SETUP.hsa, hsaAmt: SETUP.hsaAmt, espp: SETUP.espp, esppAmt: SETUP.esppAmt,
+    savingsPct: SETUP.savingsPct,
+  });
+  const [wi, setWi] = useState(mine);
+  const set = (patch) => setWi((w) => ({ ...w, ...patch }));
+  // When the setup or pay changes elsewhere (or is applied from here), start over from it.
+  const mineKey = JSON.stringify(mine());
+  useEffect(() => { setWi(mine()); }, [mineKey]);
+
+  const t = forecast({
+    ...fcCalc,
+    ...(salaried ? { salary: wi.pay } : { rate: wi.pay }),
+    hsa: wi.hsa ? wi.hsaAmt : 0, espp: wi.espp ? wi.esppAmt : 0,
+    setup: { hsa: wi.hsa, hsaAmt: wi.hsaAmt, retire: wi.retire, retirePct: wi.retirePct,
+             espp: wi.espp, esppAmt: wi.esppAmt, savingsPct: wi.savingsPct },
+  });
+  const incomeTax = (x) => x.federal + x.state;
+  const fica = (x) => x.socSec + x.medicare;
+  // Gross, income tax and checking always show; the rest only when either
+  // side has some (no point showing an HSA row of zeros).
+  const lines = [
+    ["Gross pay", (x) => x.gross, true],
+    ["Income tax (federal + state)", incomeTax, true],
+    ["Social Security + Medicare", fica, true],
+    ["401k", (x) => x.retirement],
+    ["HSA", (x) => x.hsa],
+    ["ESPP", (x) => x.espp],
+    ["Savings transfers", (x) => x.savings],
+    ["Lands in checking", (x) => x.takeHome, true],
+  ].filter(([, fn, always]) => always || [f, t].some((x) => Math.abs(fn(x)) > 0.004));
+  const changed = JSON.stringify(wi) !== JSON.stringify(mine());
+  const d = (fn) => fn(t) - fn(f);
+  const word = (v, more, less) => `${money(Math.abs(v))} ${v >= 0 ? more : less}`;
+  const notes = [];
+  if (Math.abs(d((x) => x.gross)) > 0.004) notes.push(word(d((x) => x.gross), "more gross pay", "less gross pay"));
+  if (Math.abs(d((x) => x.retirement)) > 0.004) notes.push(word(d((x) => x.retirement), "more into your 401k", "less into your 401k"));
+  if (Math.abs(d((x) => x.hsa)) > 0.004) notes.push(word(d((x) => x.hsa), "more into your HSA", "less into your HSA"));
+  if (Math.abs(d(incomeTax)) > 0.004) notes.push(word(d(incomeTax), "more income tax", "less income tax"));
+  if (Math.abs(d(fica)) > 0.004) notes.push(word(d(fica), "more Social Security and Medicare", "less Social Security and Medicare"));
+  if (Math.abs(d((x) => x.savings)) > 0.004) notes.push(word(d((x) => x.savings), "more to savings", "less to savings"));
+  const dCheck = d((x) => x.takeHome);
+
+  const apply = () => {
+    changeSetup({ retire: wi.retire, retirePct: wi.retirePct, hsa: wi.hsa, hsaAmt: wi.hsaAmt,
+                  espp: wi.espp, esppAmt: wi.esppAmt, savingsPct: wi.savingsPct });
+    setFc((x) => ({ ...x, ...(salaried ? { salary: wi.pay } : { rate: wi.pay }) }));
+  };
+  const field = (label, child) => (
+    <div className="space-y-1">
+      <div className="text-xs" style={{ color: C.muted }}>{label}</div>
+      <div className="flex flex-wrap items-end gap-2">{child}</div>
+    </div>
+  );
+
+  return (
+    <Panel title="What if"
+      note={salaried
+        ? "Your regular checks are all the same, so the useful question is what a change would do. Try one here; your setup stays as it is until you apply it."
+        : "Try a different 401k, HSA, savings or rate, with the same hours as the forecast above. Your setup stays as it is until you apply it."}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {field(salaried ? "Yearly salary $" : "Hourly rate $",
+          <div className="w-32"><NumField label="" value={wi.pay} onChange={(v) => set({ pay: v })} /></div>)}
+        {field("401k",
+          <>
+            <Choice label="What-if 401k" options={[["none", "None"], ["roth", "Roth"], ["traditional", "Traditional"]]}
+              value={wi.retire} onPick={(v) => set({ retire: v })} />
+            {wi.retire !== "none" && <div className="w-24"><NumField label="% of gross" scale={100} value={wi.retirePct} onChange={(v) => set({ retirePct: v })} /></div>}
+          </>)}
+        {field("HSA",
+          <>
+            <Choice label="What-if HSA" options={[[true, "Have one"], [false, "None"]]} value={wi.hsa} onPick={(v) => set({ hsa: v })} />
+            {wi.hsa && <div className="w-24"><NumField label="Per check $" value={wi.hsaAmt} onChange={(v) => set({ hsaAmt: v })} /></div>}
+          </>)}
+        {field("ESPP",
+          <>
+            <Choice label="What-if ESPP" options={[[true, "Have one"], [false, "None"]]} value={wi.espp} onPick={(v) => set({ espp: v })} />
+            {wi.espp && <div className="w-24"><NumField label="Per check $" value={wi.esppAmt} onChange={(v) => set({ esppAmt: v })} /></div>}
+          </>)}
+        {field("Savings transfers",
+          <div className="w-24"><NumField label="% of net pay" scale={100} value={wi.savingsPct} onChange={(v) => set({ savingsPct: v })} /></div>)}
+      </div>
+
+      <div className="overflow-x-auto mt-4">
+        <table className="w-full text-xs sm:text-sm" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: `2px solid ${C.ink}` }}>
+              {["Per check", "Now", "What if", "Change", "Per year"].map((c, i) => (
+                <th key={c} className={`py-2 text-xs uppercase tracking-wider whitespace-nowrap ${i ? "text-right pl-2" : "text-left"}${i === 4 ? " hidden sm:table-cell" : ""}`} style={{ color: C.muted }}>{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map(([label, fn]) => {
+              const delta = fn(t) - fn(f);
+              return (
+                <tr key={label} style={{ borderBottom: `1px solid ${C.rule}` }}>
+                  <td className="py-1.5" style={{ fontWeight: label === "Lands in checking" ? 700 : 400 }}>{label}</td>
+                  <td className="py-1.5 pl-2 text-right whitespace-nowrap" style={{ fontFamily: MONO }}>{money(fn(f))}</td>
+                  <td className="py-1.5 pl-2 text-right whitespace-nowrap" style={{ fontFamily: MONO, fontWeight: 600 }}>{money(fn(t))}</td>
+                  <td className="py-1.5 pl-2 text-right whitespace-nowrap" style={{ fontFamily: MONO, color: Math.abs(delta) < 0.005 ? C.muted : C.ink }}>
+                    {Math.abs(delta) < 0.005 ? "—" : `${delta > 0 ? "+" : "−"}${money(Math.abs(delta))}`}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right whitespace-nowrap hidden sm:table-cell" style={{ fontFamily: MONO, color: C.muted }}>
+                    {Math.abs(delta) < 0.005 ? "—" : `${delta > 0 ? "+" : "−"}${money(Math.abs(delta * 26))}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="text-sm mt-3 px-3 py-2 rounded" style={{ background: changed ? C.accentSoft : C.paper, color: changed ? C.accent : C.muted }}>
+        {!changed ? "Change anything above to compare it with your setup."
+          : Math.abs(dCheck) < 0.005 && !notes.length ? "No difference to a regular check."
+          : <>Each check: {word(dCheck, "more", "less")} in checking{notes.length ? `, with ${notes.join(", ")}` : ""}.
+              {" "}Over a year of 26 checks, that's {word(dCheck * 26, "more", "less")} landing in checking.
+              {wi.retire === "traditional" && SETUP.retire !== "traditional" && " A traditional 401k is taxed when you take it out in retirement; a Roth isn't."}</>}
+      </div>
+
+      <div className="flex flex-wrap gap-2 mt-3">
+        <button onClick={apply} disabled={!changed} className="px-4 py-2 rounded text-sm"
+          style={{ background: changed ? C.ink : C.rule, color: changed ? C.card : C.muted, fontWeight: 600 }}>
+          Make this my setup
+        </button>
+        <button onClick={() => setWi(mine())} disabled={!changed} className="px-3 py-2 rounded text-sm"
+          style={{ border: `1px solid ${C.rule}`, color: C.muted }}>Back to my setup</button>
+      </div>
+    </Panel>
   );
 }
 
@@ -2201,7 +2342,7 @@ function WeekLogPanel({ weekLog, setWeekLog, payDate, rate, rows }) {
   );
 }
 
-function ForecastTab({ fc, setFc, rows, onLog, weekLog, setWeekLog, forecasts, setForecasts }) {
+function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog, forecasts, setForecasts }) {
   const weekKeys = weekEndingsFor(fc.payDate);
   const weeks = weekKeys.map((k) => weekLog[k] || BLANK_WEEK);
   fc = { ...fc, weeks, payType: PAY_TYPE, salary: fc.salary ?? PAY.salary ?? 0 };
@@ -2380,6 +2521,8 @@ function ForecastTab({ fc, setFc, rows, onLog, weekLog, setWeekLog, forecasts, s
           Once the real stub arrives, use this to prefill the log, then correct any line that differs.
         </div>
       </Panel>
+
+      <WhatIfPanel fcCalc={fcCalc} f={f} changeSetup={changeSetup} setFc={setFc} />
 
       <ForecastAccuracy forecasts={forecasts} rows={rows} setForecasts={setForecasts} />
 
