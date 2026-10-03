@@ -90,6 +90,11 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
   outlook. Savings transfers aren't on a stub, so they're estimated from the setup.
 - The pay rate history is built from the ledger's own past years plus the
   current rate, not from a fixed list.
+- **What if** (`WhatIfPanel`, Forecast tab): runs `forecast()` with a trial
+  setup and pay next to the real one, per check and ×26 per year. Nothing
+  changes until "Make this my setup", which calls `changeSetup`. It resyncs to the
+  setup whenever the setup or pay changes. Its button groups are labelled
+  "What-if 401k" and so on, so tests can tell them from the setup panel's.
 - `lastBackup` remembers when a backup was last made and a fingerprint of the
   paychecks, so the page can say when there's work that hasn't been backed up.
 

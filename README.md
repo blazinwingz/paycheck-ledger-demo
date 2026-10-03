@@ -29,7 +29,7 @@ person's pay.
 | Tab | What it does |
 |---|---|
 | **Log** | Every paycheck: gross, the four tax lines, benefits, retirement, savings. Also W-2 adjustment rows (stock sales) that count as income but carry no deductions. Shows what changed against the previous check. |
-| **Forecast** | Predicts the next check. Hourly: from hours worked, with a week-by-week log. Salaried: yearly salary ÷ 26, plus any bonus. Shows what one more overtime hour (or a $1,000 raise) is really worth after taxes. |
+| **Forecast** | Predicts the next check. Hourly: from hours worked, with a week-by-week log. Salaried: yearly salary ÷ 26, plus any bonus. A **What if** panel tries a different 401k (Roth or traditional, any percent), HSA, ESPP, savings or pay side by side with your setup, per check and per year, and can make it your setup. |
 | **Trends** | Year-end projection, effective rates, retirement and HSA pacing, and for hourly pay, hours and overtime. |
 | **Checks** | Audit rules over every row: tax lines that don't add up, Social Security or Medicare off their fixed rates, hours × rate that doesn't match gross, retirement off its usual percent, skipped pay periods. |
 | **Past years** | Whole-year totals from each year's W-2 and final stub, compared against the current year. |
