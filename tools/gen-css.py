@@ -14,7 +14,7 @@ cls = {c for c in cls if re.match(r'^-?[a-z]', c)}
 sp = lambda v: f"{float(v) * 0.25:g}rem"
 esc = lambda c: re.sub(r'([:.])', r'\\\1', c)
 FIXED = {
- 'block':'display:block','flex':'display:flex','grid':'display:grid','hidden':'display:none',
+ 'block':'display:block','table-cell':'display:table-cell','flex':'display:flex','grid':'display:grid','hidden':'display:none',
  'flex-1':'flex:1 1 0%','flex-wrap':'flex-wrap:wrap','items-baseline':'align-items:baseline',
  'items-center':'align-items:center','items-end':'align-items:flex-end','items-start':'align-items:flex-start',
  'justify-between':'justify-content:space-between','self-center':'align-self:center','shrink-0':'flex-shrink:0',
