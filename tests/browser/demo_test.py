@@ -31,10 +31,10 @@ with sync_playwright() as pw:
     def tab(name):
         pg.get_by_role("button", name=name, exact=False).first.click(); pg.wait_for_timeout(300)
     def pick(group, option):
-        pg.get_by_role("group", name=group).get_by_role("button", name=option, exact=True).click()
+        pg.get_by_role("group", name=group, exact=True).get_by_role("button", name=option, exact=True).click()
         pg.wait_for_timeout(400)
     def pressed(group, option):
-        return pg.get_by_role("group", name=group).get_by_role("button", name=option, exact=True).get_attribute("aria-pressed") == "true"
+        return pg.get_by_role("group", name=group, exact=True).get_by_role("button", name=option, exact=True).get_attribute("aria-pressed") == "true"
     def open_setup():
         b = pg.get_by_role("button", name="Change setup")
         if b.count(): b.click(); pg.wait_for_timeout(300)
@@ -90,6 +90,21 @@ with sync_playwright() as pw:
     tab("Tax outlook"); check("401k stays under" not in body(), "no 401k: checklist item hidden")
     pick("401k", "Roth")
     check(abs(taxes() - roth_tax) < 0.01, "back to Roth: taxes as before")
+
+    # What if (salary): try traditional without touching the setup, then apply it
+    pick("Paid by", "Salary")
+    tab("Forecast")
+    check("WHAT IF" in up() and "Change anything above" in body(), "what-if panel shows on salary")
+    before = taxes()
+    pick("What-if 401k", "Traditional")
+    t = body()
+    check("less income tax" in t and "Make this my setup" in t, "what-if: traditional shows less income tax")
+    check(abs(taxes() - before) < 0.01 and "Roth 401k 20%" in t, "what-if: setup unchanged until applied")
+    pg.get_by_role("button", name="Make this my setup").click(); pg.wait_for_timeout(400)
+    check("Traditional 401k 20%" in body() and taxes() < before, "what-if: applying changes the setup")
+    check("Change anything above" in body(), "what-if: resets after applying")
+    pick("401k", "Roth")
+    pick("Paid by", "Hourly")
 
     # ESPP and savings
     pick("ESPP", "None")
