@@ -14,6 +14,8 @@ partway through the year, copy the year-to-date column from your last stub into
 the **starting totals**, so the totals, projections and tax outlook cover the
 whole year.
 
+**Try it:** https://blazinwingz.github.io/paycheck-ledger-demo/
+
 Everything builds into one self-contained HTML file. No server, and no network
 requests once it loads.
 
@@ -100,6 +102,10 @@ it. Salaried pay has no overtime, so the deduction is hidden in salary mode.
 
 
 ## How the demo is published
+
+Every upload runs the tests (`.github/workflows/ci.yml`). When they pass on the
+main branch, the built page is published to GitHub Pages, at the link above.
+The page is identical to the Claude artifact demo.
 
 The demo is published as a Claude artifact **with no runtime capabilities**: no
 account storage, no file downloads. Visitors' entries save to their own browser

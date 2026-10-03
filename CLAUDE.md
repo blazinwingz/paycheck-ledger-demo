@@ -10,6 +10,9 @@ invented. Real pay data never belongs here, and any real ledger lives outside
 this repo and is **out of scope**: don't open it, change it, or ask for its data.
 
 - **Published demo:** https://claude.ai/artifact/KBkRgpF8eZfsv2gdaqVRHC
+- **GitHub Pages copy:** https://blazinwingz.github.io/paycheck-ledger-demo/ —
+  published by `.github/workflows/ci.yml` when the tests pass on main. It adds
+  the doctype and viewport lines the artifact host would otherwise add.
 - **Build stamp:** `BUILD` near the top of `src/app.jsx`, shown at the bottom of
   the Backup tab. Bump `version` and `date` on every publish.
 
