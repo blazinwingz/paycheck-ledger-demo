@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# Generated: copy of src/seed.example.js that the build reads. Edit the example, not this.
+src/seed.js
+*.csv
+*-backup-*.json
