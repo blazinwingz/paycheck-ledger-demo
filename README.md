@@ -10,7 +10,9 @@ Roth, traditional or no 401k, and what percent; an ESPP or not; and what share
 of each check goes to savings. Anything you don't have disappears from the app.
 While the sample year is showing, it's redone to match whatever you pick.
 
-**Start my own ledger** clears the sample and opens the setup. If you start
+A first visit opens an empty ledger with the setup showing. **Try the example
+year** loads an invented sample to look around in, and **Start my own ledger**
+clears it again. If you start
 partway through the year, copy the year-to-date column from your last stub into
 the **starting totals**, so the totals, projections and tax outlook cover the
 whole year.

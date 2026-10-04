@@ -96,6 +96,10 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
   Social Security or Medicare.
 - A setup change redoes the sample only while the ledger is the untouched
   sample (`isSample`). Otherwise it keeps the visitor's entries.
+- **A first visit** (nothing saved in the browser) opens an empty ledger with
+  the setup showing (`startFresh` calls `startOwn`). "Try the example year"
+  (`loadSample`) loads the sample with its example setup, rate and salary; the
+  Backup tab's "Reload the sample year" does the same.
 - **Start my own ledger** (shown while the sample is up) clears entries, past
   years and the week log, marks the sample years removed, and opens the setup.
   The setup starts blank: no HSA, 401k, ESPP or savings, and no rate or salary
