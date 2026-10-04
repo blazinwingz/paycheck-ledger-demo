@@ -13,8 +13,11 @@ this repo and is **out of scope**: don't open it, change it, or ask for its data
 - **GitHub Pages copy:** https://blazinwingz.github.io/paycheck-ledger-demo/ —
   published by `.github/workflows/ci.yml` when the tests pass on main. It adds
   the doctype and viewport lines the artifact host would otherwise add.
-- **Build stamp:** `BUILD` near the top of `src/app.jsx`, shown at the bottom of
-  the Backup tab. Bump `version` and `date` on every publish.
+- **Version:** `BUILD` near the top of `src/app.jsx`, shown at the bottom of the
+  Backup tab, and `"version"` in `package.json`. They must match (`npm test`
+  checks). Use major.minor.patch and bump on every publish: patch for bug fixes
+  (1.0.0 → 1.0.1), minor for a new feature (→ 1.1.0), major for a big overhaul or
+  anything that breaks saved ledgers or backups (→ 2.0.0). Update `date` too.
 
 ## The one hard rule: invented data only
 
@@ -95,6 +98,10 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
   sample (`isSample`). Otherwise it keeps the visitor's entries.
 - **Start my own ledger** (shown while the sample is up) clears entries, past
   years and the week log, marks the sample years removed, and opens the setup.
+  The setup starts blank: no HSA, 401k, ESPP or savings, and no rate or salary
+  (only frequency and W-4 status carry over). A rate of 0 means "not set": there
+  is no fallback to `PAY.rate`, and anything that divides by the rate skips.
+  "Reload the sample year" brings back the sample's example setup and rate.
 - **Starting totals** (`opening`, `OPENING`): a stub's year-to-date figures from
   before the first logged check, for a mid-year start. They're folded into
   `ytd` (`count` includes them), the projection, the 401k/HSA pacing and the tax
