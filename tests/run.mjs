@@ -160,5 +160,15 @@ for (const y of [...(YEARS_SEED || []), ...(SALARY_YEARS_SEED || [])]) {
 const otPay = r2(10 * 25) + r2(10 * 25 * 0.5);
 if (Math.abs(otPay / 3 - 125) > 0.001) fail("overtime premium rule");
 
+// The version shown in the app matches package.json, and reads major.minor.patch.
+{
+  const { readFileSync } = await import("node:fs");
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+  const m = readFileSync(new URL("../src/app.jsx", import.meta.url), "utf8").match(/const BUILD = \{ version: "([^"]+)"/);
+  const app = m && m[1];
+  if (!/^\d+\.\d+\.\d+$/.test(app || "")) fail(`app version "${app}" isn't major.minor.patch`);
+  if (app !== pkg) fail(`app version ${app} doesn't match package.json ${pkg}`);
+}
+
 console.log(failures ? `${failures} failing` : `pay model ok (${checks.length} sample paychecks: hourly and salaried, ${SETUPS.length + SALARY_SETUPS.length} setups, every pay frequency)`);
 process.exit(failures ? 1 : 0);
