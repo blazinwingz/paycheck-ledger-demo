@@ -106,6 +106,34 @@ with sync_playwright() as pw:
     pick("401k", "Roth")
     pick("Paid by", "Hourly")
 
+    # Pay frequency and W-4 filing status
+    count = lambda: int(re.search(r"(\d+) PAYCHECKS? ·", up()).group(1))
+    biweekly_count, biweekly_tax = count(), taxes()
+    pick("Pay frequency", "Weekly")
+    check(count() == 2 * biweekly_count, "weekly: the sample becomes twice as many checks")
+    check("HSA $50.00" in body(), "weekly: HSA per check halves, same yearly amount")
+    tab("Forecast"); t = body()
+    check("Week 2 has no overtime" not in t and re.search(r"An overtime hour bills \$[1-9]", t), "weekly: one week per check, overtime hour still counts")
+    tab("Checks"); check("these dates have nothing logged" not in body(), "weekly: no false missing-paycheck warnings")
+    for t in TABS: tab(t)
+    check(not pg.get_by_role("group", name="Pay frequency", exact=True).get_by_role("button", name="Twice a month").count(),
+          "hourly: twice a month isn't offered")
+    pick("Pay frequency", "Every 2 weeks")
+    check(count() == biweekly_count and abs(taxes() - biweekly_tax) < 0.01, "back to every 2 weeks: sample as before")
+    pick("Paid by", "Salary")
+    for freq, per, want in [("Twice a month", 24, "2,416.67"), ("Monthly", 12, "4,833.33")]:
+        pick("Pay frequency", freq)
+        tab("Forecast"); t = body()
+        check(f"÷ {per}" in t and want in t, f"salary {freq.lower()}: 58,000 ÷ {per} = {want}")
+        tab("Checks"); check("these dates have nothing logged" not in body(), f"salary {freq.lower()}: no false missing-paycheck warnings")
+        for t in TABS: tab(t)
+    pick("Pay frequency", "Every 2 weeks")
+    single_tax = taxes()
+    pick("W-4 filing status", "Married filing jointly")
+    check(taxes() < single_tax, "married filing jointly: less withheld than single")
+    pick("W-4 filing status", "Single")
+    pick("Paid by", "Hourly")
+
     # ESPP and savings
     pick("ESPP", "None")
     tab("Forecast"); check("ESPP stock" not in body(), "no ESPP: hidden from the forecast")
@@ -142,6 +170,37 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(1200)
     pg.reload(); pg.wait_for_timeout(1500)
     check(gross() == 22000.0, "own ledger and starting totals survive a reload")
+
+    # Odd ledgers (CSV imports, typos, last year's checks) must never break a tab.
+    import json
+    def load(entries):
+        pg.evaluate("([k,v])=>localStorage.setItem(k,v)", ["paycheck_ledger_2026",
+            json.dumps({"entries": entries, "years": [], "removedYears": ["y2024", "y2025"]})])
+        pg.reload(); pg.wait_for_timeout(900)
+    def all_tabs_ok():
+        bad = []
+        for t in TABS:
+            tab(t); x = body()
+            if "Something broke" in x or "NaN" in x or "Infinity" in x: bad.append(t)
+        return bad
+    P = lambda i, d, **k: {"id": i, "type": "paycheck", "date": d, "gross": 2000, "taxTotal": 400, **k}
+    load([P("a", "2026-06-05", hsa="100.00", dental="1.00", label="Jun"), P("b", "2026-06-19", hsa="100.00", dental="1.00", label="Jun 2")])
+    tab("Trends"); m = re.search(r"YOURS SO FAR THIS YEAR\s*\$([\d,\.]+)", up())
+    check(m and m.group(1) == "200.00", "HSA typed as text still adds up ($200, not NaN)")
+    load([P("a", "2026-06-05")])
+    check(all_tabs_ok() == [], "a single paycheck: no tab breaks or shows NaN")
+    load([P("a", "2026-06-05"), P("b", "2026-06-19")])
+    ok = all_tabs_ok() == []; tab("Log")
+    check(ok and "Jun check" in body(), "paychecks with no label: named from the date, nothing breaks")
+    load([P("a", "06/05/2026x"), P("b", "2026-06-19", label="Ok")])
+    ok = all_tabs_ok() == []; tab("Log")
+    check(ok and "date can't be read" in body() and gross() == 2000.0, "a bad date: flagged, kept out of totals, nothing breaks")
+    load([P("a", "2025-12-26", label="Dec"), P("b", "2026-01-09", label="Jan")])
+    tab("Log"); t = body()
+    check("2025 · not in 2026 totals" in t and gross() == 2000.0, "last year's check: shown but not counted")
+    tab("Backup"); pg.get_by_role("button", name="Clear the ledger").click(); pg.wait_for_timeout(200)
+    pg.get_by_role("button", name="Erase everything").click(); pg.wait_for_timeout(500)
+    check("SET UP YOUR LEDGER" in up() and "Everything cleared" in body(), "erase everything: clears and opens the setup")
     browser.close()
 
 print("\n".join(results))
