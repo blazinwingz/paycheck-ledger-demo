@@ -5,7 +5,8 @@ where the year's taxes are heading, shown here with **invented data**.
 
 A **setup** panel says how you're paid and what comes out of each check: hourly
 or salary; weekly, every two weeks, twice a month or monthly (hourly pay is
-weekly or every two weeks); your W-4 filing status; an HSA or not (it needs a high-deductible, or CDHP, health plan); a
+weekly or every two weeks); your W-4 filing status; health, dental and vision
+premiums; an HSA or not (it needs a high-deductible, or CDHP, health plan); a
 Roth, traditional or no 401k, and what percent; an ESPP or not; and what share
 of each check goes to savings. Anything you don't have disappears from the app.
 While the sample year is showing, it's redone to match whatever you pick.
@@ -81,7 +82,8 @@ bracket and at every pay frequency.
 
 | Line | Rule |
 |---|---|
-| Withholding base | gross − HSA − the pre-tax part of the dental premium |
+| Withholding base | gross − HSA − health premiums (both come off before every tax) |
+| Benefits | HSA + health premiums, added up for you |
 | Social Security | 6.2% of the base |
 | Medicare | 1.45% of the base |
 | Income tax base | the withholding base, less a **traditional** 401k (a Roth comes off after tax) |

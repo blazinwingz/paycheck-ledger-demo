@@ -48,7 +48,7 @@ const sampleFor = (type, setup) => {
 // Version numbers are major.minor.patch, the same as package.json "version":
 //   patch (1.0.0 → 1.0.1) bug fixes · minor (→ 1.1.0) a new feature ·
 //   major (→ 2.0.0) a big overhaul or a change that breaks saved ledgers/backups.
-const BUILD = { version: "1.1.0", date: "2026-10-03" };
+const BUILD = { version: "1.2.0", date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -126,7 +126,10 @@ const pctS = (v) => v.toFixed(2) + "%";
 const derive = (e) => {
   const gross = n(e.gross);
   const taxTotal = n(e.taxTotal);
-  const benefits = n(e.benefits);
+  // Benefits are the pre-tax lines: HSA plus health premiums (stored as
+  // "dental"). Added up from the parts when they're there; a CSV import with
+  // only a Benefits column keeps its number.
+  const benefits = has(e.hsa) || has(e.dental) ? n(e.hsa) + n(e.dental) : n(e.benefits);
   const retirement = n(e.retirement);
   const espp = n(e.espp);
   const savings = n(e.savings);
@@ -135,8 +138,6 @@ const derive = (e) => {
   const splitSum = TAX_PARTS.reduce((s, p) => s + n(e[p.key]), 0);
   const hasSplit = TAX_PARTS.some((p) => has(e[p.key]));
   const taxableWages = gross - benefits; // benefits are the pre-tax lines
-  const hasBenSplit = has(e.hsa) || has(e.dental);
-  const benSum = n(e.hsa) + n(e.dental);
   const isAdj = e.type === "adjustment";
   // Hours, when entered. Overtime is paid as straight time plus a half-time premium,
   // rounded separately — and that half-time premium is what the federal overtime
@@ -162,7 +163,7 @@ const derive = (e) => {
     : (isAdj ? "Adjustment" : "Paycheck");
   return { ...e, label, type: e.type || "paycheck", isAdj, gross, taxTotal, benefits, retirement, espp,
            savings, netPay, takeHome, splitSum, hasSplit, taxableWages,
-           hasBenSplit, benSum, payRate, regH, otH, holH, ptoH, premH, premPayN: premPay,
+           payRate, regH, otH, holH, ptoH, premH, premPayN: premPay,
            straightHours: regH + holH + ptoH,
            hasHours: hasHoursAny, otPremium, otPay, hoursGross };
 };
@@ -172,7 +173,7 @@ const derive = (e) => {
 const OPENING_FIELDS = [
   ["checks", "Paychecks already paid"], ["gross", "Gross pay"], ["federal", "Federal tax"],
   ["socSec", "Social Security"], ["medicare", "Medicare"], ["state", "State tax"],
-  ["hsa", "HSA"], ["dental", "Dental"], ["retirement", "401k"], ["espp", "ESPP"], ["otPay", "Overtime pay"],
+  ["hsa", "HSA"], ["dental", "Health premiums"], ["retirement", "401k"], ["espp", "ESPP"], ["otPay", "Overtime pay"],
 ];
 const openingTotals = (o) => {
   if (!o || !n(o.gross)) return null;
@@ -243,9 +244,6 @@ const auditRow = (d) => {
   }
   if (d.hasHours && d.payRate > 0 && Math.abs(d.hoursGross - d.gross) > 0.02) {
     flags.push({ level: "bad", msg: `Hours at ${money(d.payRate)}/hr come to ${money(d.hoursGross)}, but gross says ${money(d.gross)} — off by ${money(d.hoursGross - d.gross)}. Check the hours against the stub's earnings section.` });
-  }
-  if (d.hasBenSplit && Math.abs(d.benSum - d.benefits) > 0.01) {
-    flags.push({ level: "bad", msg: `${HAS_HSA ? "HSA plus dental" : "Dental"} is ${money(d.benSum)}, but the benefits line says ${money(d.benefits)}.` });
   }
   if (has(d.medicare)) {
     const exp = d.taxableWages * MEDI_RATE;
@@ -386,11 +384,11 @@ const forecast = (inp) => {
   const premPay = n(inp.premPay);
   const salaryPay = inp.payType === "salary" ? r2(n(inp.salary) / periodsOf(inp.setup || SETUP)) : 0;
   const gross = r2(weeks.reduce((s, w) => s + w.straight + w.premium, 0) + salaryPay + premPay);
-  // Deductions follow the visitor's setup (see src/profile.js). The withholding
-  // base is not gross minus the benefits line — see PAY.dentalPreTax.
+  // Deductions follow the visitor's setup (see src/profile.js): HSA and health
+  // premiums come off before every tax.
   const setup = { ...(inp.setup || SETUP), hsaAmt: n(inp.hsa), esppAmt: n(inp.espp) };
   const { hsa, dental, benefits, socSec, medicare, federal, state, taxTotal, retirement, espp,
-          netPay, savings, takeHome, ficaBase: taxable, incomeBase } = payroll(gross, setup, PAY, n(inp.dental));
+          netPay, savings, takeHome, ficaBase: taxable, incomeBase } = payroll(gross, setup, PAY);
   const otHours = weeks.reduce((s, w) => s + w.ot, 0);
   return {
     weeks, salaryPay, salary: n(inp.salary), gross, premPay, premHrs: n(inp.premHrs), benefits, hsa, dental, taxable, socSec, medicare, federal, state,
@@ -405,7 +403,7 @@ const forecast = (inp) => {
 const CSV_COLS = [
   ["date", "Date"], ["label", "Label"], ["type", "Type"], ["gross", "Gross"],
   ["taxTotal", "Tax Total"], ["federal", "Federal"], ["socSec", "Social Security"],
-  ["medicare", "Medicare"], ["state", "State"], ["benefits", "Benefits"], ["hsa", "HSA"], ["dental", "Dental"],
+  ["medicare", "Medicare"], ["state", "State"], ["benefits", "Benefits"], ["hsa", "HSA"], ["dental", "Health premiums"],
   ["rate", "Rate"], ["regHrs", "Regular Hrs"], ["otHrs", "Overtime Hrs"],
   ["holHrs", "Holiday Hrs"], ["ptoHrs", "PTO Hrs"], ["otPayAmt", "Overtime Pay"],
   ["premHrs", "Premium Hrs"], ["premPay", "Premium Pay"],
@@ -502,11 +500,12 @@ function PaycheckLedger() {
   // A setup change. While the ledger is still the sample, the sample year is
   // redone to match, so the demo shows what that setup does to a paycheck.
   const changeSetup = (patch) => {
-    // A new pay frequency keeps the same yearly HSA and ESPP: $100 every two
-    // weeks becomes $50 a week.
+    // A new pay frequency keeps the same yearly HSA, ESPP and premiums: $100
+    // every two weeks becomes $50 a week.
     if (patch.freq && patch.freq !== setup.freq) {
       const k = periodsOf(setup) / periodsOf({ freq: patch.freq });
-      patch = { hsaAmt: Math.round(setup.hsaAmt * k * 100) / 100, esppAmt: Math.round(setup.esppAmt * k * 100) / 100, ...patch };
+      const per = (v) => Math.round((v || 0) * k * 100) / 100;
+      patch = { hsaAmt: per(setup.hsaAmt), esppAmt: per(setup.esppAmt), premAmt: per(setup.premAmt), ...patch };
     }
     const next = { ...setup, ...patch };
     const untouched = swapSample(payType, next);
@@ -520,7 +519,7 @@ function PaycheckLedger() {
     // A fresh ledger assumes nothing: no HSA, 401k, ESPP or savings, and no rate
     // or salary until the visitor types theirs. Frequency and W-4 status stay.
     setSetup({ ...defaultSetup(PAY), freq: setup.freq, filing: setup.filing,
-               hsa: false, hsaAmt: 0, retire: "none", retirePct: 0, espp: false, esppAmt: 0, savingsPct: 0 });
+               premAmt: 0, hsa: false, hsaAmt: 0, retire: "none", retirePct: 0, espp: false, esppAmt: 0, savingsPct: 0 });
     setFc((f) => ({ ...f, rate: "", salary: "", hsa: 0, espp: 0, premPay: "", premHrs: "" }));
     setEntries([]);
     setYears([]);
@@ -557,7 +556,7 @@ function PaycheckLedger() {
   const [opening, setOpening] = useState({});
   const [lastBackup, setLastBackup] = useState(null);   // { at, count }
   const [fc, setFc] = useState({
-    payDate: "2026-10-02", rate: PAY.rate, salary: PAY.salary || 0, hsa: 100, dental: PAY.dental, espp: PAY.espp,
+    payDate: "2026-10-02", rate: PAY.rate, salary: PAY.salary || 0, hsa: 100, espp: PAY.espp,
     weeks: [{ reg: 40, ot: 6, hol: 0, pto: 0 }, { reg: 40, ot: "", hol: 0, pto: 0 }],
   });
   PAY_TYPE = payType;
@@ -924,6 +923,7 @@ function PaycheckLedger() {
     const heads = lines[0].split(",").map((h) => h.trim().toLowerCase());
     const idx = {};
     CSV_COLS.forEach(([k, h]) => { idx[k] = heads.indexOf(h.toLowerCase()); });
+    if (idx.dental < 0) idx.dental = heads.indexOf("dental");   // files exported before 1.2.0
     if (idx.date < 0 || idx.gross < 0) {
       setStatus("Needs at least a Date and Gross column. Export one first to see the format.");
       return;
@@ -962,6 +962,8 @@ function PaycheckLedger() {
     const { netPay, takeHome, splitSum, hasSplit, taxableWages, isAdj, hasBenSplit, benSum,
       payRate, regH, otH, holH, ptoH, premH, premPayN, hasHours, otPremium, otPay, hoursGross,
       ...e } = raw;
+    // The benefits line is always HSA + health premiums; keep the stored copy in step.
+    if (e.type !== "adjustment" && (has(e.hsa) || has(e.dental))) e.benefits = (n(e.hsa) + n(e.dental)).toFixed(2);
     setEntries((prev) => {
       const i = prev.findIndex((p) => p.id === e.id);
       if (i === -1) return [...prev, e];
@@ -1101,7 +1103,7 @@ function PaycheckDiff({ rows }) {
   const lines = [
     ["Gross pay", now.gross - prev.gross, PAY_TYPE === "salary" ? "a raise, or extra pay" : "hours worked, or a rate change"],
     ["Taxes", -(now.taxTotal - prev.taxTotal), "withholding follows gross"],
-    ["Benefits", -(now.benefits - prev.benefits), HAS_HSA ? "HSA or dental changed" : "dental changed"],
+    ["Benefits", -(now.benefits - prev.benefits), HAS_HSA ? "HSA or premiums changed" : "premiums changed"],
     [retireLabel(), -(now.retirement - prev.retirement), `${pctLabel(SETUP.retirePct)} of gross`],
     ["ESPP", -(now.espp - prev.espp), "stock contribution"],
     ["Savings transfers", -(now.savings - prev.savings), `${pctLabel(SETUP.savingsPct)} of net pay`],
@@ -1149,8 +1151,8 @@ function LogTab({ rows, editing, setEditing, save, remove, nextPayDate }) {
     label: "", gross: "", taxTotal: "",
     federal: "", socSec: "", medicare: "", state: "",
     // Prefilled from the setup: dental, plus the HSA and ESPP if they have them.
-    benefits: type === "adjustment" ? "" : (n(PAY.dental) + (HAS_HSA ? SETUP.hsaAmt : 0)).toFixed(2),
-    ...(type === "adjustment" ? {} : { hsa: HAS_HSA ? SETUP.hsaAmt.toFixed(2) : "", dental: n(PAY.dental).toFixed(2) }),
+    // Prefilled from the setup; the benefits line adds itself up from these.
+    ...(type === "adjustment" ? {} : { hsa: HAS_HSA ? SETUP.hsaAmt.toFixed(2) : "", dental: SETUP.premAmt ? SETUP.premAmt.toFixed(2) : "" }),
     retirement: "", espp: type !== "adjustment" && HAS_ESPP ? SETUP.esppAmt.toFixed(2) : "", savings: "",
   });
   return (
@@ -1236,7 +1238,7 @@ function WhatIfPanel({ fcCalc, f, changeSetup, setFc }) {
     ...fcCalc,
     ...(salaried ? { salary: wi.pay } : { rate: wi.pay }),
     hsa: wi.hsa ? wi.hsaAmt : 0, espp: wi.espp ? wi.esppAmt : 0,
-    setup: { hsa: wi.hsa, hsaAmt: wi.hsaAmt, retire: wi.retire, retirePct: wi.retirePct,
+    setup: { ...SETUP, hsa: wi.hsa, hsaAmt: wi.hsaAmt, retire: wi.retire, retirePct: wi.retirePct,
              espp: wi.espp, esppAmt: wi.esppAmt, savingsPct: wi.savingsPct },
   });
   const incomeTax = (x) => x.federal + x.state;
@@ -1370,6 +1372,7 @@ function SetupBar({ payType, fc, open, setOpen }) {
     payType === "salary" ? (n(fc.salary) > 0 ? `Salary ${money(n(fc.salary))} a year` : "Salary not set")
       : (curRate() > 0 ? `Hourly ${money(curRate())}` : "Hourly rate not set"),
     `paid ${FREQ_LABEL[SETUP.freq || "biweekly"].toLowerCase()}`,
+    SETUP.premAmt > 0 ? `Premiums ${money(SETUP.premAmt)}` : "No premiums",
     HAS_HSA ? `HSA ${money(SETUP.hsaAmt)}` : "No HSA",
     HAS_RETIRE ? `${retireLabel()} ${pctLabel(SETUP.retirePct)}` : "No 401k",
     HAS_ESPP ? `ESPP ${money(SETUP.esppAmt)}` : "No ESPP",
@@ -1455,6 +1458,10 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
       {section("Filing status on your W-4", "Payroll uses it to work out federal and state withholding.", <>
         <Choice label="W-4 filing status" options={[["single", "Single"], ["mfj", "Married filing jointly"], ["mfs", "Married filing separately"]]}
           value={setup.filing || "single"} onPick={(v) => changeSetup({ filing: v })} />
+      </>)}
+
+      {section("Health, dental and vision premiums", "What comes out of each check for insurance, all together. Most employer plans take it before tax. Leave it empty if you have none.", <>
+        <div className="w-32"><NumField label="Per check $" blankZero value={setup.premAmt || 0} onChange={(v) => changeSetup({ premAmt: v })} /></div>
       </>)}
 
       {section("HSA", "Only possible with a high-deductible (CDHP/HDHP) health plan. Comes out before all tax.", <>
@@ -1704,7 +1711,13 @@ function EntryForm({ entry, onSave, onCancel, onDelete }) {
             style={{ border: `1px solid ${C.rule}`, background: C.paper, color: C.ink }} />
         </label>
         {field("gross", isAdj ? "Earnings amount" : "Gross pay")}
-        {!isAdj && field("benefits", "Benefits total", HAS_HSA ? "HSA + dental" : "Dental")}
+        {!isAdj && (
+          <div>
+            <div className="text-xs mb-1" style={{ color: C.muted }}>Benefits</div>
+            <div className="px-2 py-1.5 text-sm" style={{ fontFamily: MONO }}>{money(d.benefits)}</div>
+            <div className="text-xs mt-0.5" style={{ color: C.muted }}>{HAS_HSA ? "HSA + health premiums" : "Health premiums"}, added up for you</div>
+          </div>
+        )}
       </div>
 
       {isAdj && (
@@ -1749,8 +1762,8 @@ function EntryForm({ entry, onSave, onCancel, onDelete }) {
       <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${C.rule}` }}>
         <div className="text-xs uppercase tracking-wider mb-2" style={{ color: C.muted }}>Other deductions and routing</div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {HAS_HSA && field("hsa", "HSA", "Pre-tax, skips FICA too")}
-          {field("dental", "Dental premium")}
+          {HAS_HSA && field("hsa", "HSA", "Before all tax")}
+          {field("dental", "Health premiums", "Health, dental, vision · before all tax")}
           {HAS_RETIRE && field("retirement", retireLabel())}
           {HAS_ESPP && field("espp", "ESPP stock")}
           {HAS_SAVINGS && field("savings", "Savings transfers", "Moved to savings")}
@@ -2286,7 +2299,7 @@ function PredictedStub({ f }) {
       {line("State income tax", f.state, { indent: true, neg: true })}
 
       <div className="text-xs uppercase tracking-wider mt-4 mb-1" style={{ color: C.muted }}>Other</div>
-      {line("Dental", f.dental, { indent: true, neg: true })}
+      {line("Health premiums", f.dental, { indent: true, neg: true })}
       {HAS_HSA && line("HSA", f.hsa, { indent: true, neg: true })}
       {HAS_RETIRE && line(retireLabel(), f.retirement, { indent: true, neg: true })}
       {HAS_ESPP && line("ESPP stock", f.espp, { indent: true, neg: true })}
@@ -2432,7 +2445,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
     gross: f.gross.toFixed(2), taxTotal: f.taxTotal.toFixed(2),
     federal: f.federal.toFixed(2), socSec: f.socSec.toFixed(2),
     medicare: f.medicare.toFixed(2), state: f.state.toFixed(2),
-    benefits: f.benefits.toFixed(2), hsa: f.hsa.toFixed(2), dental: n(fc.dental).toFixed(2),
+    benefits: f.benefits.toFixed(2), hsa: f.hsa.toFixed(2), dental: f.dental.toFixed(2),
     retirement: f.retirement.toFixed(2), espp: f.espp.toFixed(2), savings: f.savings.toFixed(2),
     ...(PAY_TYPE === "salary" ? {} : {
       rate: String(f.rate),
@@ -2517,7 +2530,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
             <div className="grid grid-cols-2 gap-3">
               {HAS_RETIRE && <Stat label="Into your 401k" value={money(f.retirement)} />}
               {HAS_SAVINGS && <Stat label="Into savings" value={money(f.savings)} />}
-              {HAS_HSA ? <Stat label="Into HSA" value={money(f.hsa)} /> : <Stat label="Into dental" value={money(f.dental)} />}
+              {HAS_HSA ? <Stat label="Into HSA" value={money(f.hsa)} /> : <Stat label="Health premiums" value={money(f.dental)} />}
               <Stat label="Effective tax rate" value={pctS(pct(f.taxTotal, f.gross))} />
             </div>
             {avg > 0 && (
@@ -2578,7 +2591,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
         note="These are the rules this ledger applies. In your own copy you would fit the two offsets to your own stubs.">
         <ul className="text-sm space-y-1" style={{ color: C.muted }}>
           <li>· {PAY_TYPE === "salary" ? `Gross = yearly salary ÷ ${PER_YEAR()}, plus any bonus` : "Gross = rate × (regular + holiday + PTO), plus overtime paid as straight time and a half-time premium, rounded separately"}</li>
-          <li>· Withholding base = gross{HAS_HSA ? " − HSA" : ""} − {money(PAY.dentalPreTax)} (only part of the dental premium comes off)</li>
+          <li>· Withholding base = gross{HAS_HSA ? " − HSA" : ""} − health premiums (both come off before every tax)</li>
           <li>· Social Security 6.2% and Medicare 1.45% of that base — exact</li>
           <li>· Federal and state: the base{SETUP.retire === "traditional" ? " less the traditional 401k" : ""}, times {PER_YEAR()} checks a year, through the 2026 brackets after the standard deduction ({FED_2026[SETUP.filing || "single"].label.toLowerCase()} on the W-4), divided back by {PER_YEAR()}. Payroll's percentage method works the same way.</li>
           {SETUP.retire === "traditional" && <li>· Federal and state use that base less the traditional 401k</li>}
@@ -2933,7 +2946,7 @@ const deriveYear = (y) => {
 const yearFieldShown = (k) => !(k.startsWith("hsa") && !HAS_HSA) && !(k === "retirement" && !HAS_RETIRE) && !(k === "espp" && !HAS_ESPP);
 const YEAR_FIELDS = [
   ["gross", "Gross pay"], ["federal", "Federal tax"], ["socSec", "Social Security"],
-  ["medicare", "Medicare"], ["state", "State tax"], ["dental", "Dental"],
+  ["medicare", "Medicare"], ["state", "State tax"], ["dental", "Health premiums"],
   ["hsa", "HSA (yours)"], ["hsaEmployer", "HSA (employer)"], ["retirement", "401k"],
   ["espp", "ESPP"], ["otPay", "Overtime pay"], ["baseRate", "Base rate"], ["otRate", "Overtime rate"],
   ["w2Wages", "W-2 wages (Box 1)"], ["ficaWages", "FICA wages (Box 3)"],
@@ -2951,19 +2964,18 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
   const status = FED_2026[tax.status] ? tax.status : "single";
   const F = FED_2026[status], K = STATE_2026[status];
 
-  // Wages as the W-2 will report them: gross, less pre-tax HSA, the part of
-  // the dental premium that comes off and any traditional 401k, plus ESPP income
-  // that had nothing withheld. Starting totals cover checks before the log began.
+  // Wages as the W-2 will report them: gross, less pre-tax HSA, health premiums
+  // and any traditional 401k, plus ESPP income that had nothing withheld. Starting totals cover checks before the log began.
   const trad = SETUP.retire === "traditional";
   const o = OPENING || { gross: 0, hsa: 0, retirement: 0, checks: 0, federal: 0, state: 0, otPremium: 0 };
-  const wagesOf = (r) => r.gross - n(r.hsa) - PAY.dentalPreTax - (trad ? r.retirement : 0);
+  const wagesOf = (r) => r.gross - n(r.hsa) - n(r.dental) - (trad ? r.retirement : 0);
   const wagesYTD = checks.reduce((s, r) => s + wagesOf(r), 0)
     + adjustments.reduce((s, r) => s + r.gross, 0)
-    + (o.gross - o.hsa - PAY.dentalPreTax * o.checks - (trad ? o.retirement : 0));
+    + (o.gross - o.hsa - (o.dental || 0) - (trad ? o.retirement : 0));
   const avgGross = checks.length ? checks.reduce((s, r) => s + r.gross, 0) / checks.length
     : (o.checks ? o.gross / o.checks : 0);
   const futureHsa = HAS_HSA ? SETUP.hsaAmt : 0;
-  const futureWage = Math.max(0, avgGross - futureHsa - PAY.dentalPreTax
+  const futureWage = Math.max(0, avgGross - futureHsa - SETUP.premAmt
     - (trad ? avgGross * SETUP.retirePct : 0));
   const wagesProjected = wagesYTD + futureWage * remaining;
 
@@ -3210,7 +3222,7 @@ function YearEndChecklist({ ytd, rows, remaining, limit, hsaLimit, hsaEmployer, 
         ? `${money(adjustments.reduce((s, a) => s + a.gross, 0))} of ESPP income this year with nothing withheld — it belongs on your return.`
         : "None this year." }]),
     { done: false, pending: true, label: "In January: check the W-2 against this ledger",
-      detail: `Box 1 should be close to ${money(ytd.gross - ytd.hsa - PAY.dentalPreTax * ytd.count - (SETUP.retire === "traditional" ? ytd.retirement : 0) + ytd.adjGross)} plus the rest of the year.${otDeduction > 0 ? ` Qualifying overtime should be near ${money(otDeduction)}.` : ""}` },
+      detail: `Box 1 should be close to ${money(ytd.gross - ytd.hsa - ytd.dental - (SETUP.retire === "traditional" ? ytd.retirement : 0) + ytd.adjGross)} plus the rest of the year.${otDeduction > 0 ? ` Qualifying overtime should be near ${money(otDeduction)}.` : ""}` },
   ];
 
   return (
@@ -3344,7 +3356,7 @@ function PastYearsTab({ years, setYears, setRemovedYears, ytd }) {
             <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
               <tbody>
                 {[["Federal tax", n(y.federal)], ["Social Security", n(y.socSec)], ["Medicare", n(y.medicare)],
-                  ["State tax", n(y.state)], [HAS_HSA ? "Benefits (HSA + dental)" : "Benefits (dental)", y.benefits],
+                  ["State tax", n(y.state)], [HAS_HSA ? "Benefits (HSA + health premiums)" : "Benefits (health premiums)", y.benefits],
                   [retireLabel(), y.retirement], ["ESPP", y.espp], ["Savings transfers", y.savings]]
                   .filter(([l]) => !(l === retireLabel() && !HAS_RETIRE) && !(l === "ESPP" && !HAS_ESPP) && !(l === "Savings transfers" && !HAS_SAVINGS))
                   .map(([l, v]) => (
@@ -3362,7 +3374,7 @@ function PastYearsTab({ years, setYears, setRemovedYears, ytd }) {
             <div className="mt-3 px-3 py-2 rounded text-sm"
               style={{ background: y.w2Ok ? C.greenSoft : C.redSoft, color: y.w2Ok ? C.green : C.red }}>
               W-2 wages {money(y.w2Wages)} — gross {money(y.gross)} plus {money(y.gtl)} group-term life,
-              less {money(y.benefits)} of pre-tax {HAS_HSA ? "HSA and dental" : "dental"}
+              less {money(y.benefits)} of pre-tax {HAS_HSA ? "HSA and health premiums" : "health premiums"}
               {SETUP.retire === "traditional" ? ` and ${money(y.retirement)} of traditional 401k` : ""}
               {y.w2Ok ? " ✓" : ` — that comes to ${money(y.w2Expected)}, so a figure is off`}
             </div>

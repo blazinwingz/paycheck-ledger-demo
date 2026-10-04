@@ -79,7 +79,7 @@ with sync_playwright() as pw:
     for t in TABS: tab(t)
     tab("Trends"); check("HSA PACING" not in up(), "hsa off: pacing panel hidden")
     tab("Forecast"); t = up()
-    check("INTO HSA" not in t and "INTO DENTAL" in t, "hsa off: forecast has no HSA")
+    check("INTO HSA" not in t and "HEALTH PREMIUMS" in t, "hsa off: forecast has no HSA")
     tab("Tax outlook"); t = body()
     check("with no HSA" in t and "HSA stays under the cap" not in t, "hsa off: tax tab leaves HSA out")
     tab("Past years"); check("HSA (yours)" not in body(), "hsa off: past years hide HSA")
@@ -155,7 +155,7 @@ with sync_playwright() as pw:
     check("Sample cleared" in body() and "SET UP YOUR LEDGER" in up(), "start my own: sample cleared, setup open")
     check("every figure here is invented" not in body(), "start my own: demo banner gone")
     t = body()
-    check("Hourly rate not set" in t and "No HSA" in t and "No 401k" in t and "No ESPP" in t and "No savings transfers" in t,
+    check("Hourly rate not set" in t and "No premiums" in t and "No HSA" in t and "No 401k" in t and "No ESPP" in t and "No savings transfers" in t,
           "start my own: setup starts blank (no rate, HSA, 401k, ESPP or savings)")
     check(all(pressed(g, "None") for g in ["HSA", "401k", "ESPP"]), "start my own: HSA, 401k and ESPP set to None")
     rate_box = pg.get_by_label("Hourly rate $", exact=True)
@@ -165,6 +165,22 @@ with sync_playwright() as pw:
     check("NaN" not in x and "Infinity" not in x and "$25.00" not in x, "blank rate: nothing breaks, no leftover $25 rate")
     tab("Log")
     tab("Past years"); check("2024" not in body() and "2025" not in body(), "start my own: sample past years gone")
+    # Benefits add themselves up: HSA + health premiums, nothing to type.
+    pg.get_by_label("Per check $", exact=True).first.fill("75"); pg.wait_for_timeout(200)
+    pick("HSA", "Have one")
+    pg.get_by_label("Per check $", exact=True).nth(1).fill("40"); pg.wait_for_timeout(200)
+    check("Premiums $75.00" in body() and "HSA $40.00" in body(), "setup: premiums and HSA per check")
+    pg.get_by_role("button", name="Done").click(); pg.wait_for_timeout(200)
+    tab("Log")
+    pg.get_by_role("button", name="Log a paycheck", exact=False).first.click(); pg.wait_for_timeout(300)
+    t = body()
+    check("Benefits" in t and "$115.00" in t and "added up for you" in t, "paycheck form: benefits = HSA + premiums, added up for you")
+    check(not pg.get_by_label("Benefits total", exact=True).count(), "paycheck form: no benefits total to type")
+    pg.get_by_label("Health premiums").first.fill("80"); pg.wait_for_timeout(200)
+    check("$120.00" in body(), "paycheck form: benefits follow the lines as you type")
+    pg.get_by_role("button", name="Cancel").first.click(); pg.wait_for_timeout(200)
+    pg.get_by_role("button", name="Change setup").click(); pg.wait_for_timeout(200)
+    pg.get_by_label("Per check $", exact=True).first.fill(""); pick("HSA", "None"); pg.wait_for_timeout(200)
     pg.get_by_role("button", name="Starting partway through the year?").click(); pg.wait_for_timeout(200)
     for label, v in [("Paychecks already paid", "10"), ("Gross pay", "20000"), ("Federal tax", "1500"),
                      ("Social Security", "1200"), ("Medicare", "280"), ("State tax", "900")]:
@@ -202,7 +218,7 @@ with sync_playwright() as pw:
             if "Something broke" in x or "NaN" in x or "Infinity" in x: bad.append(t)
         return bad
     P = lambda i, d, **k: {"id": i, "type": "paycheck", "date": d, "gross": 2000, "taxTotal": 400, **k}
-    load([P("a", "2026-06-05", hsa="100.00", dental="1.00", label="Jun"), P("b", "2026-06-19", hsa="100.00", dental="1.00", label="Jun 2")])
+    load([P("a", "2026-06-05", hsa="100.00", dental="60.00", label="Jun"), P("b", "2026-06-19", hsa="100.00", dental="60.00", label="Jun 2")])
     tab("Trends"); m = re.search(r"YOURS SO FAR THIS YEAR\s*\$([\d,\.]+)", up())
     check(m and m.group(1) == "200.00", "HSA typed as text still adds up ($200, not NaN)")
     load([P("a", "2026-06-05")])

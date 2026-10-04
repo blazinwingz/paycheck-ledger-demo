@@ -73,7 +73,9 @@ Components read them directly. Salary mode:
 The setup (`setup` state, `SETUP` at module level, set by the root on every
 render like `PAY_TYPE`) says how often pay comes and what comes out of a check:
 `freq` (weekly, biweekly, semimonthly, monthly; hourly is weekly or biweekly
-only), `filing` (the W-4 status), `hsa`/`hsaAmt`,
+only), `filing` (the W-4 status), `premAmt` (health, dental and vision
+premiums per check, all pre-tax; stored on each paycheck as `dental` so older
+ledgers and backups still load), `hsa`/`hsaAmt`,
 `retire` ("roth", "traditional" or "none")/`retirePct`, `espp`/`esppAmt`, and
 `savingsPct`. `HAS_HSA`, `HAS_RETIRE`, `HAS_ESPP` and `HAS_SAVINGS` hide what a
 visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
@@ -122,6 +124,9 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
   in the Log (tagged) and on the Checks tab, but out of every total. Pass
   `yearRows`, not `rows`, to anything that adds things up. The tax tables are
   2026's; the Tax outlook says so when the ledger year differs.
+- **Benefits are never typed.** `derive()` adds them up from HSA + premiums
+  (`dental`); only a CSV row with a Benefits column and no parts keeps its own.
+  `save()` keeps the stored `benefits` in step.
 - **Form fields arrive as text** ("100.00"). Wrap any raw entry field in `n()`
   before adding it up; `derive()` only converts the main money columns.
 - `lastBackup` remembers when a backup was last made and a fingerprint of the

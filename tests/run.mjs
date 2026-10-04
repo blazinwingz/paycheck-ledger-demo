@@ -38,7 +38,8 @@ const SETUPS = [
   ["traditional 6%, no HSA", { ...D, retire: "traditional", retirePct: 0.06, hsa: false }],
   ["no 401k", { ...D, retire: "none" }],
   ["no ESPP, no savings", { ...D, espp: false, savingsPct: 0 }],
-  ["nothing extra", { ...D, hsa: false, hsaAmt: 0, retire: "none", retirePct: 0, espp: false, esppAmt: 0, savingsPct: 0 }],
+  ["nothing extra", { ...D, premAmt: 0, hsa: false, hsaAmt: 0, retire: "none", retirePct: 0, espp: false, esppAmt: 0, savingsPct: 0 }],
+  ["bigger premiums", { ...D, premAmt: 185.5 }],
   ["married filing jointly", { ...D, filing: "mfj" }],
   ["weekly", { ...D, freq: "weekly" }],
   ["weekly, traditional", { ...D, freq: "weekly", retire: "traditional" }],
@@ -55,11 +56,13 @@ const add = (name, su, list, kind) => {
     if (e.type !== "adjustment") checks.push({ ...checkForSetup(e, su, PAY), _setup: su, _name: name, _kind: kind });
 };
 for (const [name, su] of SETUPS) { add(name, su, SEED, "hourly"); add(name, su, SALARY_SEED || [], "salary"); }
+// Benefits are always HSA plus health premiums.
+for (const c of checks) if (Math.abs(c.benefits - c.hsa - c.dental) > TOLERANCE) fail(`${c._name} ${c.date}: benefits ${c.benefits} isn't HSA + premiums`);
 for (const [name, su] of SALARY_SETUPS) add(name, su, SALARY_SEED || [], "salary");
 for (const c of checks) {
   const su = c._setup;
   const retire = su.retire === "none" ? 0 : r2(c.gross * su.retirePct);
-  const base = r2(c.gross - c.hsa - PAY.dentalPreTax);
+  const base = r2(c.gross - c.hsa - c.dental);   // HSA and health premiums are pre-tax
   const incomeBase = r2(base - (su.retire === "traditional" ? retire : 0));   // traditional skips income tax only
   const P = PERIODS[su.freq];
   const got = {
@@ -70,6 +73,7 @@ for (const c of checks) {
     retirement: retire,
     hsa: su.hsa ? su.hsaAmt : 0,
     espp: su.espp ? su.esppAmt : 0,
+    dental: su.premAmt,
   };
   for (const k of Object.keys(got)) {
     if (Math.abs(got[k] - c[k]) > TOLERANCE) fail(`${c._name} ${c.date} ${k}: model gives ${got[k]}, sample says ${c[k]}`);
@@ -109,7 +113,7 @@ if (SALARY_SEED) {
   const year = (freq) => {
     // Per-check HSA and ESPP scale with the frequency, as the setup does.
     const k = 26 / PERIODS[freq];
-    const su = { ...D, freq, hsaAmt: D.hsaAmt * k, esppAmt: D.esppAmt * k };
+    const su = { ...D, freq, hsaAmt: D.hsaAmt * k, esppAmt: D.esppAmt * k, premAmt: D.premAmt * k };
     return sampleChecksFor(SEED, freq, PAY).filter((e) => e.type !== "adjustment")
       .map((e) => checkForSetup(e, su, PAY)).reduce((t, c) => ({ gross: t.gross + c.gross, federal: t.federal + c.federal }), { gross: 0, federal: 0 });
   };
@@ -121,15 +125,15 @@ if (SALARY_SEED) {
 // Higher brackets: a big check is withheld at 24% and up, not a flat 22%.
 {
   const p = payroll(9000, { ...D, hsa: false, retire: "none", espp: false }, PAY, 0);
-  const want = fedWithheld(9000 - PAY.dentalPreTax, 26, "single");
+  const want = fedWithheld(9000, 26, "single");
   if (Math.abs(p.federal - want) > TOLERANCE) fail(`big check federal ${p.federal}, expected ${want}`);
-  if (!(p.federal > (9000 - PAY.dentalPreTax) * 0.18)) fail(`big check withheld too little: ${p.federal}`);
+  if (!(p.federal > 9000 * 0.18)) fail(`big check withheld too little: ${p.federal}`);
 }
 
 // The app's own payroll() must reproduce the stored sample exactly with the
 // default setup, so the forecast and the samples can't drift apart.
 for (const e of samples.filter((x) => x.type !== "adjustment")) {
-  const p = payroll(e.gross, D, PAY, e.dental);
+  const p = payroll(e.gross, D, PAY);
   for (const k of ["federal", "socSec", "medicare", "state", "retirement", "savings", "taxTotal", "benefits"])
     if (Math.abs(p[k] - e[k]) > TOLERANCE) fail(`payroll() ${e.date} ${k}: ${p[k]} vs sample ${e[k]}`);
 }

@@ -5,6 +5,7 @@
    A setup looks like:
      { freq: "biweekly",                    // weekly | biweekly | semimonthly | monthly
        filing: "single",                    // the W-4 filing status: single | mfj | mfs
+       premAmt: 60,                         // health, dental and vision premiums per check
        hsa: true,  hsaAmt: 100,             // per check
        retire: "roth" | "traditional" | "none", retirePct: 0.20,  // of gross
        espp: true,   esppAmt: 200,          // per check
@@ -106,6 +107,7 @@ export function payDatesLeft(dateStr, freq, year) {
 
 export const defaultSetup = (PAY) => ({
   freq: "biweekly", filing: "single",
+  premAmt: PAY.premiums || 0,
   hsa: true, hsaAmt: 100,
   retire: "roth", retirePct: PAY.retirePct,
   espp: true, esppAmt: PAY.espp,
@@ -117,11 +119,14 @@ export const defaultSetup = (PAY) => ({
 const pct01 = (v) => Math.min(1, Math.max(0, +v || 0));
 const amt = (v) => Math.max(0, +v || 0);
 
-export function payroll(gross, s, PAY, dental = PAY.dental) {
+/* Health, dental and vision premiums come out before every tax, as they do in
+   most employer (section 125) plans, and so does a payroll HSA. */
+export function payroll(gross, s, PAY, premiums = s.premAmt) {
+  const dental = r2(amt(premiums));                     // stored as "dental": all health premiums
   const hsa = s.hsa ? r2(amt(s.hsaAmt)) : 0;
   const retirement = s.retire === "none" ? 0 : r2(gross * pct01(s.retirePct));
   const espp = s.espp ? r2(amt(s.esppAmt)) : 0;
-  const ficaBase = r2(gross - hsa - PAY.dentalPreTax);
+  const ficaBase = r2(gross - hsa - dental);
   const incomeBase = r2(ficaBase - (s.retire === "traditional" ? retirement : 0));
   const socSec = r2(ficaBase * PAY.ssRate);
   const medicare = r2(ficaBase * PAY.medicareRate);
@@ -139,8 +144,8 @@ const sameSetup = (a, b) => Object.keys(b).every((k) => a[k] === b[k]);
 /* One sample paycheck, redone for a setup. Gross and hours stay the same. */
 export function checkForSetup(e, s, PAY) {
   if (e.type === "adjustment" || sameSetup(s, defaultSetup(PAY))) return e;
-  const p = payroll(e.gross, s, PAY, e.dental);
-  return { ...e, hsa: p.hsa, benefits: p.benefits, retirement: p.retirement, espp: p.espp,
+  const p = payroll(e.gross, s, PAY);
+  return { ...e, hsa: p.hsa, dental: p.dental, benefits: p.benefits, retirement: p.retirement, espp: p.espp,
            federal: p.federal, socSec: p.socSec, medicare: p.medicare, state: p.state,
            taxTotal: p.taxTotal, savings: p.savings };
 }
@@ -155,10 +160,11 @@ export function yearForSetup(y, s, PAY) {
   const hsa = s.hsa ? r2(s.hsaAmt * checks) : 0;
   const retirement = s.retire === "none" ? 0 : r2(y.gross * s.retirePct);
   const espp = s.espp ? r2(s.esppAmt * checks) : 0;
-  const ficaMore = (y.hsa || 0) - hsa;                                     // less HSA → more taxed
+  const dental = r2(amt(s.premAmt) * checks);                             // health premiums for the year
+  const ficaMore = (y.hsa || 0) - hsa + (y.dental || 0) - dental;          // less pre-tax → more taxed
   const incomeMore = ficaMore - (s.retire === "traditional" ? retirement : 0);
   return {
-    ...y, hsa, retirement, espp,
+    ...y, hsa, retirement, espp, dental,
     hsaEmployer: s.hsa ? y.hsaEmployer : 0,
     w2Wages: r2((y.w2Wages || 0) + incomeMore),
     // The extra (or missing) wages are taxed at that year's top federal rate.

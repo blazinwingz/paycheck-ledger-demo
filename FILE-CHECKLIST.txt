@@ -1,0 +1,51 @@
+PAYCHECK LEDGER DEMO: FILE CHECKLIST
+Version 1.2.0 · 2026-10-03
+
+Use this to check that GitHub and this folder have the latest files.
+On GitHub, open a file: the line count shows just above the code.
+
+A difference of one line either way is fine (it depends on whether the
+file ends with a blank line). ci.yml and SECURITY.md were edited on
+GitHub directly, so they may be off by a line or two. A big difference
+means an older copy is still there.
+
+Top level of the repo
+  .gitignore                 6 lines
+  CLAUDE.md                148 lines
+  README.md                134 lines
+  SECURITY.md               21 lines
+  package.json              20 lines
+
+.github/workflows
+  ci.yml                    48 lines
+
+src
+  app.jsx                3,879 lines
+  entry.jsx                  4 lines
+  profile.js               224 lines
+  seed.example.js          841 lines
+  utils.css                105 lines
+
+tests
+  run.mjs                  178 lines
+
+tests/browser
+  demo_test.py             246 lines
+
+tools
+  build.mjs                 34 lines
+  gen-css.py                61 lines
+  gen-samples.mjs           47 lines
+  render-check.mjs          50 lines
+
+TOTAL: 17 files, 6,046 lines
+
+Not on GitHub on purpose (rebuilt by the tests): node_modules, dist,
+src/seed.js.
+
+Uploading tip: from the repo's main page, use Add file > Upload files
+and drag the folders and changed files in together, so it's one commit
+and one test run. app.jsx and package.json must have the same version
+number, or the test shows a red X.
+
+This list is a note for you. It doesn't need to go on GitHub.
