@@ -14,7 +14,8 @@ let PAY_TYPE = "hourly";
 let CUR_SALARY = 0;
 const rateOf = (y) => (PAY_TYPE === "salary" ? n(y.salary) : n(y["baseRate"]));
 let CUR_RATE = 0;
-const curRate = () => (PAY_TYPE === "salary" ? CUR_SALARY : (CUR_RATE || PAY.rate));
+// The visitor's rate or salary. 0 means not set yet (a fresh ledger starts blank).
+const curRate = () => (PAY_TYPE === "salary" ? CUR_SALARY : CUR_RATE);
 const SAMPLES = {
   hourly: { entries: SEED, years: YEARS_SEED },
   salary: { entries: SALARY_SEED, years: SALARY_YEARS_SEED },
@@ -44,7 +45,10 @@ const sampleFor = (type, setup) => {
   });
 };
 
-const BUILD = { version: 11, date: "2026-10-03" };
+// Version numbers are major.minor.patch, the same as package.json "version":
+//   patch (1.0.0 → 1.0.1) bug fixes · minor (→ 1.1.0) a new feature ·
+//   major (→ 2.0.0) a big overhaul or a change that breaks saved ledgers/backups.
+const BUILD = { version: "1.0.0", date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -138,7 +142,7 @@ const derive = (e) => {
   // rounded separately — and that half-time premium is what the federal overtime
   // deduction counts, not the full 1.5x.
   // Numeric copies get their own names so the raw form fields stay untouched.
-  const payRate = n(e.rate) || CUR_RATE || PAY.rate;
+  const payRate = n(e.rate) || CUR_RATE;   // 0 when no rate is known: hour checks are skipped
   const regH = n(e.regHrs), otH = n(e.otHrs), holH = n(e.holHrs), ptoH = n(e.ptoHrs);
   const hasHours = [e.regHrs, e.otHrs, e.holHrs, e.ptoHrs].some(has);
   const rnd = (v) => Math.round(v * 100) / 100;
@@ -232,12 +236,12 @@ const auditRow = (d) => {
   if (d.hasSplit && Math.abs(d.splitSum - d.taxTotal) > 0.01) {
     flags.push({ level: "bad", msg: `Tax split adds to ${money(d.splitSum)} but the total says ${money(d.taxTotal)} — off by ${money(d.splitSum - d.taxTotal)}.` });
   }
-  if (d.hasHours && d.straightHours > 0) {
+  if (d.hasHours && d.straightHours > 0 && d.payRate > 0) {
     const impliedRate = (d.gross - d.otPay - n(d.premPay)) / d.straightHours;
     if (Math.abs(impliedRate - d.payRate) > 0.005 && Math.abs(d.hoursGross - d.gross) > 0.02)
       flags.push({ level: "warn", msg: `These hours work out to ${money(impliedRate)} an hour, not ${money(d.payRate)}. If your rate changed, set it on this paycheck.` });
   }
-  if (d.hasHours && Math.abs(d.hoursGross - d.gross) > 0.02) {
+  if (d.hasHours && d.payRate > 0 && Math.abs(d.hoursGross - d.gross) > 0.02) {
     flags.push({ level: "bad", msg: `Hours at ${money(d.payRate)}/hr come to ${money(d.hoursGross)}, but gross says ${money(d.gross)} — off by ${money(d.hoursGross - d.gross)}. Check the hours against the stub's earnings section.` });
   }
   if (d.hasBenSplit && Math.abs(d.benSum - d.benefits) > 0.01) {
@@ -366,7 +370,7 @@ const weekRanges = (payDate) => {
 };
 
 const forecast = (inp) => {
-  const rate = n(inp.rate) || PAY.rate;
+  const rate = n(inp.rate);
   const weeks = (inp.payType === "salary" ? [] : (inp.weeks || [])).map((w) => {
     const reg = Math.min(n(w.reg), PAY.weeklyHours);
     const ot = n(w.ot), hol = n(w.hol), pto = n(w.pto);
@@ -513,6 +517,11 @@ function PaycheckLedger() {
   };
   // Start a ledger of your own: the sample goes, the setup opens.
   const startOwn = (msg) => {
+    // A fresh ledger assumes nothing: no HSA, 401k, ESPP or savings, and no rate
+    // or salary until the visitor types theirs. Frequency and W-4 status stay.
+    setSetup({ ...defaultSetup(PAY), freq: setup.freq, filing: setup.filing,
+               hsa: false, hsaAmt: 0, retire: "none", retirePct: 0, espp: false, esppAmt: 0, savingsPct: 0 });
+    setFc((f) => ({ ...f, rate: "", salary: "", hsa: 0, espp: 0, premPay: "", premHrs: "" }));
     setEntries([]);
     setYears([]);
     setRemovedYears([...new Set([...YEARS_SEED, ...(SALARY_YEARS_SEED || [])].map((y) => y.id))]);
@@ -523,7 +532,7 @@ function PaycheckLedger() {
     setHsaEmployer(0);        // the sample's employer deposit isn't yours
     setHsaEmpPaid(false);
     setSetupOpen(true);
-    setStatus(typeof msg === "string" ? msg : "Sample cleared. Set up what comes out of your checks, then log your first paycheck.");
+    setStatus(typeof msg === "string" ? msg : "Sample cleared. Enter your pay and anything that comes out of your checks, then log your first paycheck.");
   };
   const [removedYears, setRemovedYears] = useState([]);
   const [tax, setTax] = useState({ status: "single", dependents: "", otherIncome: "", otherWithheld: "" });
@@ -549,8 +558,8 @@ function PaycheckLedger() {
   HAS_ESPP = setup.espp;
   HAS_SAVINGS = setup.savingsPct > 0;
   OPENING = openingTotals(opening);
-  CUR_SALARY = n(fc.salary) || PAY.salary || 0;
-  CUR_RATE = n(fc.rate) || PAY.rate;
+  CUR_SALARY = n(fc.salary);
+  CUR_RATE = n(fc.rate);
 
   /* --- storage --------------------------------------------------
      Saved privately to the viewer's Claude account (db, under their own
@@ -1019,7 +1028,13 @@ function PaycheckLedger() {
             backupText={backupText} setBackupText={setBackupText}
             confirmReset={confirmReset} setConfirmReset={setConfirmReset}
             reset={() => { setConfirmReset(false); startOwn("Everything cleared. Check your setup, then log your first paycheck."); setTab("log"); }}
-            reseed={() => { const sm = sampleFor(payType, setup); setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setHsaEmployer(500); setConfirmReset(false); setStatus("Reloaded the sample year."); }} />
+            reseed={() => {
+              // The sample comes back with its own example setup, rate and salary.
+              const su = defaultSetup(PAY), sm = sampleFor(payType, su);
+              setSetup(su); setFc((f) => ({ ...f, rate: PAY.rate, salary: PAY.salary || 0, hsa: su.hsaAmt, espp: su.esppAmt }));
+              setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setHsaEmployer(500);
+              setConfirmReset(false); setStatus("Reloaded the sample year, with its example setup.");
+            }} />
         )}
       </div>
     </div>
@@ -1348,7 +1363,8 @@ const ledgerSig = (entries) => {
 /* One line saying what this ledger assumes comes out of each check. */
 function SetupBar({ payType, fc, open, setOpen }) {
   const parts = [
-    payType === "salary" ? `Salary ${money(n(fc.salary))} a year` : `Hourly ${money(curRate())}`,
+    payType === "salary" ? (n(fc.salary) > 0 ? `Salary ${money(n(fc.salary))} a year` : "Salary not set")
+      : (curRate() > 0 ? `Hourly ${money(curRate())}` : "Hourly rate not set"),
     `paid ${FREQ_LABEL[SETUP.freq || "biweekly"].toLowerCase()}`,
     HAS_HSA ? `HSA ${money(SETUP.hsaAmt)}` : "No HSA",
     HAS_RETIRE ? `${retireLabel()} ${pctLabel(SETUP.retirePct)}` : "No 401k",
@@ -1369,8 +1385,8 @@ function SetupBar({ payType, fc, open, setOpen }) {
 
 /* A number field that keeps what's typed ("6." on the way to "6.5") and only
    hands back a number. `scale` turns a percent on screen into a fraction. */
-function NumField({ label, hint, value, onChange, scale = 1 }) {
-  const shown = (v) => String(+(v * scale).toFixed(4));
+function NumField({ label, hint, value, onChange, scale = 1, blankZero = false }) {
+  const shown = (v) => (blankZero && !v ? "" : String(+(v * scale).toFixed(4)));
   const [draft, setDraft] = useState(shown(value));
   useEffect(() => { if (n(draft) / scale !== value) setDraft(shown(value)); }, [value]);
   return <MoneyField label={label} hint={hint} value={draft}
@@ -1421,8 +1437,8 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
         <Choice label="Paid by" options={[["hourly", "Hourly"], ["salary", "Salary"]]} value={payType} onPick={switchPayType} />
         <div className="w-32">
           {payType === "salary"
-            ? <NumField label="Yearly salary $" value={n(fc.salary)} onChange={(v) => setFc((f) => ({ ...f, salary: v }))} />
-            : <NumField label="Hourly rate $" value={n(fc.rate)} onChange={(v) => setFc((f) => ({ ...f, rate: v }))} />}
+            ? <NumField label="Yearly salary $" blankZero value={n(fc.salary)} onChange={(v) => setFc((f) => ({ ...f, salary: v }))} />
+            : <NumField label="Hourly rate $" blankZero value={n(fc.rate)} onChange={(v) => setFc((f) => ({ ...f, rate: v }))} />}
         </div>
       </>)}
 
@@ -1439,7 +1455,7 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
 
       {section("HSA", "Only possible with a high-deductible (CDHP/HDHP) health plan. Comes out before all tax.", <>
         <Choice label="HSA" options={[[true, "Have one"], [false, "None"]]} value={setup.hsa} onPick={(v) => changeSetup({ hsa: v })} />
-        {setup.hsa && <div className="w-32"><NumField label="Per check $" value={setup.hsaAmt} onChange={(v) => changeSetup({ hsaAmt: v })} /></div>}
+        {setup.hsa && <div className="w-32"><NumField label="Per check $" blankZero value={setup.hsaAmt} onChange={(v) => changeSetup({ hsaAmt: v })} /></div>}
       </>)}
 
       {section("401k", setup.retire === "traditional"
@@ -1448,12 +1464,12 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
           : "No retirement contribution from your checks.", <>
         <Choice label="401k" options={[["none", "None"], ["roth", "Roth"], ["traditional", "Traditional"]]}
           value={setup.retire} onPick={(v) => changeSetup({ retire: v })} />
-        {setup.retire !== "none" && <div className="w-32"><NumField label="% of gross" scale={100} value={setup.retirePct} onChange={(v) => changeSetup({ retirePct: v })} /></div>}
+        {setup.retire !== "none" && <div className="w-32"><NumField label="% of gross" scale={100} blankZero value={setup.retirePct} onChange={(v) => changeSetup({ retirePct: v })} /></div>}
       </>)}
 
       {section("ESPP", "An employee stock purchase plan: a set amount from each check, after tax.", <>
         <Choice label="ESPP" options={[[true, "Have one"], [false, "None"]]} value={setup.espp} onPick={(v) => changeSetup({ espp: v })} />
-        {setup.espp && <div className="w-32"><NumField label="Per check $" value={setup.esppAmt} onChange={(v) => changeSetup({ esppAmt: v })} /></div>}
+        {setup.espp && <div className="w-32"><NumField label="Per check $" blankZero value={setup.esppAmt} onChange={(v) => changeSetup({ esppAmt: v })} /></div>}
       </>)}
 
       {section("Savings transfers", "Part of each check sent straight to savings. 0 if you don't.", <>
@@ -1602,8 +1618,8 @@ function EarningsRows({ f, setF, d }) {
       </div>
       <div className="flex items-center gap-2 mt-3 text-xs" style={{ color: C.muted }}>
         <span>Hourly rate</span>
-        <div style={{ width: 110 }}>{inp("rate", curRate().toFixed(2))}</div>
-        <span>leave blank for {curRate().toFixed(2)}</span>
+        <div style={{ width: 110 }}>{inp("rate", curRate() > 0 ? curRate().toFixed(2) : "")}</div>
+        <span>{curRate() > 0 ? `leave blank for ${curRate().toFixed(2)}` : "or set your rate in the setup"}</span>
       </div>
       {d.hasHours && n(f.gross) > 0 && (
         <div className="mt-2 px-3 py-2 rounded text-sm"
@@ -2690,7 +2706,7 @@ function OvertimePanel({ rows, ytd, remaining }) {
   // Rough: a period can carry more than 80 straight hours with no overtime.
   const perCheck = checks.map((r) => {
     if (r.hasHours) return { r, hrs: r.otH, prem: r.otPremium, est: false };
-    const hrs = Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate));
+    const hrs = r.payRate > 0 ? Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate)) : 0;
     return { r, hrs, prem: Math.round(hrs * r.payRate * 50) / 100, est: true };
   });
   const logged = perCheck.filter((x) => !x.est);
@@ -2705,7 +2721,9 @@ function OvertimePanel({ rows, ytd, remaining }) {
 
   return (
     <Panel title="Overtime and the federal overtime deduction"
-      note={`Only the half-time premium counts toward the deduction — at ${money(curRate())} an hour, that's ${money(curRate() * (PAY.otMultiplier - 1))} of every overtime hour, not the full ${money(curRate() * PAY.otMultiplier)}.`}>
+      note={curRate() > 0
+        ? `Only the half-time premium counts toward the deduction — at ${money(curRate())} an hour, that's ${money(curRate() * (PAY.otMultiplier - 1))} of every overtime hour, not the full ${money(curRate() * PAY.otMultiplier)}.`
+        : "Only the half-time premium counts toward the deduction: a third of what each overtime hour pays."}>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Overtime hours" value={hrsTotal.toFixed(2)}
           sub={estimated.length ? `${estimated.length} checks estimated` : "all from your stubs"} />
@@ -2949,7 +2967,7 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
   // Qualifying overtime: from hours where entered, estimated from gross otherwise.
   const otPremium = PAY_TYPE === "salary" ? 0 : checks.reduce((s, r) => {
     if (r.hasHours) return s + r.otPremium;
-    const hrs = Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate));
+    const hrs = r.payRate > 0 ? Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate)) : 0;
     return s + hrs * r.payRate * 0.5;
   }, 0);
   const otProjected = otPremium + o.otPremium
@@ -3225,8 +3243,8 @@ function PastYearsTab({ years, setYears, setRemovedYears, ytd }) {
   const rateHistory = [
     ...years.filter((y) => n(y.baseRate) > 0).sort((a, b) => n(a.year) - n(b.year))
       .map((y) => RATE_HISTORY.find((r) => r.year === n(y.year) && r.rate === n(y.baseRate)) || { rate: n(y.baseRate), year: n(y.year) }),
-    { ...(RATE_HISTORY.find((r) => r.current && r.rate === curRate()) || {}), rate: curRate(), year: new Date().getFullYear(), current: true },
-  ];
+    { ...(RATE_HISTORY.find((r) => r.current && r.rate === curRate()) || {}), rate: curRate(), year: LEDGER_YEAR, current: true },
+  ].filter((r) => r.rate > 0);
 
   return (
     <div className="space-y-4">
@@ -3421,14 +3439,14 @@ function PastYearsTab({ years, setYears, setRemovedYears, ytd }) {
                   </tr>
                 ))}
                 <tr>
-                  <td className="py-1.5" style={{ fontWeight: 700 }}>2026 so far</td>
+                  <td className="py-1.5" style={{ fontWeight: 700 }}>{LEDGER_YEAR} so far</td>
                   <td className="py-1.5 text-right" style={{ fontFamily: MONO, fontWeight: 700 }}>
-                    {money(curRate())}
+                    {curRate() > 0 ? money(curRate()) : "—"}
                     {(() => {
-                      const prev = rows.find((r) => r.year === 2025);
-                      if (!prev || !rateOf(prev)) return null;
+                      const prev = rows.find((r) => r.year === LEDGER_YEAR - 1);
+                      if (!prev || !rateOf(prev) || !(curRate() > 0)) return null;
                       const ch = (curRate() / rateOf(prev) - 1) * 100;
-                      return <span style={{ fontWeight: 400, color: C.muted }}>{` +${ch.toFixed(1)}%`}</span>;
+                      return <span style={{ fontWeight: 400, color: C.muted }}>{` ${ch >= 0 ? "+" : ""}${ch.toFixed(1)}%`}</span>;
                     })()}
                   </td>
                   <td className="py-1.5 text-right" style={{ fontFamily: MONO, fontWeight: 700 }}>{money(ytd.gross)}</td>
