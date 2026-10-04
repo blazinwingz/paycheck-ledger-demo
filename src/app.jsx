@@ -2,7 +2,8 @@
    Copy seed.example.js to seed.js to start from placeholder figures. */
 import { SEED, YEARS_SEED, RATE_HISTORY, PAY, WEEKLOG_SEED, SALARY_SEED, SALARY_YEARS_SEED } from "./seed.js";
 
-import { defaultSetup, payroll, checkForSetup, yearForSetup } from "./profile.js";
+import { defaultSetup, payroll, checkForSetup, yearForSetup, sampleChecksFor, FED_2026, STATE_2026, bracketTax, marginalRate,
+  stateTax, PERIODS, FREQ_LABEL, periodsOf, withholding, nextPayDate as nextPayDateOf, payDatesLeft } from "./profile.js";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 
 /* Build stamp. Bump VERSION whenever you publish; DATE is what tells you
@@ -24,6 +25,10 @@ const SAMPLES = {
 let SETUP = defaultSetup(PAY);
 let HAS_HSA = true, HAS_RETIRE = true, HAS_ESPP = true, HAS_SAVINGS = true;
 const retireLabel = () => (SETUP.retire === "traditional" ? "Traditional 401k" : "Roth 401k");
+const PER_YEAR = () => periodsOf(SETUP);                     // checks a year: 52, 26, 24 or 12
+const WEEKLY = () => SETUP.freq === "weekly";
+// Straight-time hours in a normal check, for estimating overtime from gross.
+const hoursPerCheck = () => (PAY.weeklyHours * 52) / PER_YEAR();
 const pctLabel = (v) => `${+(v * 100).toFixed(2)}%`;
 /* Money paid in before the year's first logged check, copied from a stub's
    year-to-date column. Set by the root; zero when the whole year is logged. */
@@ -34,12 +39,12 @@ const sampleFor = (type, setup) => {
   if (!s.entries) return s;
   const key = type + JSON.stringify(setup);
   return SAMPLE_CACHE[key] || (SAMPLE_CACHE[key] = {
-    entries: s.entries.map((e) => checkForSetup(e, setup, PAY)),
+    entries: sampleChecksFor(s.entries, setup.freq, PAY).map((e) => checkForSetup(e, setup, PAY)),
     years: s.years.map((y) => yearForSetup(y, setup, PAY)),
   });
 };
 
-const BUILD = { version: 9, date: "2026-10-03" };
+const BUILD = { version: 11, date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -148,7 +153,10 @@ const derive = (e) => {
   const hoursGross = rnd(rnd(regH * payRate) + rnd(holH * payRate) + rnd(ptoH * payRate)
     + otPay + premPay);
   const hasHoursAny = hasHours || has(e.premHrs) || has(e.premPay) || hasOtPay;
-  return { ...e, type: e.type || "paycheck", isAdj, gross, taxTotal, benefits, retirement, espp,
+  const label = has(e.label) ? String(e.label)
+    : isDate(e.date) ? new Date(e.date + "T12:00:00").toLocaleString("en-US", { month: "short" }) + (isAdj ? " adjustment" : " check")
+    : (isAdj ? "Adjustment" : "Paycheck");
+  return { ...e, label, type: e.type || "paycheck", isAdj, gross, taxTotal, benefits, retirement, espp,
            savings, netPay, takeHome, splitSum, hasSplit, taxableWages,
            hasBenSplit, benSum, payRate, regH, otH, holH, ptoH, premH, premPayN: premPay,
            straightHours: regH + holH + ptoH,
@@ -178,16 +186,17 @@ const openingTotals = (o) => {
   return v;
 };
 
-/* Paychecks come every 14 days. A longer gap means one hasn't been logged. */
-const missingPaychecks = (checks) => {
+/* Paychecks come on the setup's schedule. A pay date with no check logged
+   between two that are means one is missing. A few days' slack allows for
+   payday moving around a weekend or holiday. */
+const missingPaychecks = (all) => {
+  const checks = all.filter((c) => isDate(c.date));
   const out = [];
   for (let i = 1; i < checks.length; i++) {
-    const gap = daysBetween(checks[i - 1].date, checks[i].date);
-    if (gap > 15 && gap < 400) {
-      for (let d = 14; d < gap - 1; d += 14) out.push({
-        expected: addDays(checks[i - 1].date, d),
-        after: checks[i - 1].label, before: checks[i].label,
-      });
+    if (daysBetween(checks[i - 1].date, checks[i].date) > 400) continue;
+    for (let d = nextPayDateOf(checks[i - 1].date, SETUP.freq), k = 0;
+         d && daysBetween(d, checks[i].date) > 3 && k < 60; d = nextPayDateOf(d, SETUP.freq), k++) {
+      out.push({ expected: d, after: checks[i - 1].label, before: checks[i].label });
     }
   }
   return out;
@@ -196,6 +205,14 @@ const missingPaychecks = (checks) => {
 /* Every rule the app knows how to check, in one place. */
 const auditRow = (d) => {
   const flags = [];
+  if (!isDate(d.date)) {
+    flags.push({ level: "bad", msg: `"${d.date || "(blank)"}" isn't a date this ledger can read. Edit it to a real date; until then it's left out of every total.` });
+    return flags;
+  }
+  if (d.date.slice(0, 4) !== String(LEDGER_YEAR)) {
+    flags.push({ level: "info", msg: `From ${d.date.slice(0, 4)}, so it's not counted in ${LEDGER_YEAR}'s totals. A whole earlier year belongs on Past years.` });
+    return flags;
+  }
   if (d.gross <= 0) return flags;
 
   // A W-2 adjustment is paper income with no cash movement, so nothing to
@@ -292,16 +309,32 @@ const r2 = (v) => Math.round(v * 100) / 100;
 /* Two Sunday–Saturday weeks, the later one ending 6 days before payday.
    For example, a Friday paycheck covers the two Sunday-to-Saturday weeks ending 6 and 13 days earlier. */
 const iso = (d) => d.toISOString().slice(0, 10);
+/* A real calendar date written YYYY-MM-DD. Anything else (a typo, an import in
+   another format) stays in the Log to be fixed but is kept out of the maths. */
+const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)
+  && !Number.isNaN(new Date(s + "T12:00:00").getTime()) && new Date(s + "T12:00:00").toISOString().slice(0, 10) === s;
+/* 1/9/2026 or 01-09-2026 (US order) to 2026-01-09; returns "" if it can't. */
+const toIsoDate = (s) => {
+  s = String(s || "").trim();
+  if (isDate(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (!m) return "";
+  const out = `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return isDate(out) ? out : "";
+};
+/* The year the totals cover: the year of the latest paycheck. Set by the root. */
+let LEDGER_YEAR = new Date().getFullYear();
 const addDays = (dateStr, n) => { const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + n); return iso(d); };
 /* A week is Sunday–Saturday and is paid the Friday six days after it ends. */
-const weekEndingsFor = (payDate) => payDate ? [addDays(payDate, -13), addDays(payDate, -6)] : ["", ""];
+const weekEndingsFor = (payDate) => !payDate ? (WEEKLY() ? [""] : ["", ""])
+  : WEEKLY() ? [addDays(payDate, -6)] : [addDays(payDate, -13), addDays(payDate, -6)];
 /* Weeks pair into fortnightly periods: the first week of a pair is paid 13 days
    after it ends, the second 6. Which one a week is depends on the pay calendar,
    so this measures against a known pay date. */
 const daysBetween = (a, b) =>
   Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
 const payDateForWeek = (weekEnd, anchorPayDate) => {
-  if (!anchorPayDate) return addDays(weekEnd, 6);
+  if (!anchorPayDate || WEEKLY()) return addDays(weekEnd, 6);
   const weeksOff = Math.round(daysBetween(addDays(anchorPayDate, -6), weekEnd) / 7);
   const isSecondWeek = ((weeksOff % 2) + 2) % 2 === 0;
   return addDays(weekEnd, isSecondWeek ? 6 : 13);
@@ -319,12 +352,12 @@ const saturdayOf = (dateStr) => {
 const BLANK_WEEK = { reg: 40, ot: "", hol: 0, pto: 0 };
 
 const weekRanges = (payDate) => {
-  if (!payDate) return ["", ""];
+  if (!payDate) return WEEKLY() ? [""] : ["", ""];
   const end2 = new Date(payDate + "T12:00:00");
   end2.setDate(end2.getDate() - 6);
   const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const out = [];
-  for (const back of [13, 6]) {
+  for (const back of (WEEKLY() ? [6] : [13, 6])) {
     const a = new Date(end2); a.setDate(a.getDate() - back);
     const b = new Date(a); b.setDate(b.getDate() + 6);
     out.push(`${fmt(a)} – ${fmt(b)}`);
@@ -347,7 +380,7 @@ const forecast = (inp) => {
     };
   });
   const premPay = n(inp.premPay);
-  const salaryPay = inp.payType === "salary" ? r2(n(inp.salary) / 26) : 0;
+  const salaryPay = inp.payType === "salary" ? r2(n(inp.salary) / periodsOf(inp.setup || SETUP)) : 0;
   const gross = r2(weeks.reduce((s, w) => s + w.straight + w.premium, 0) + salaryPay + premPay);
   // Deductions follow the visitor's setup (see src/profile.js). The withholding
   // base is not gross minus the benefits line — see PAY.dentalPreTax.
@@ -358,40 +391,12 @@ const forecast = (inp) => {
   return {
     weeks, salaryPay, salary: n(inp.salary), gross, premPay, premHrs: n(inp.premHrs), benefits, hsa, dental, taxable, socSec, medicare, federal, state,
     taxTotal, retirement, espp, netPay, savings, takeHome, otHours, rate,
-    incomeBase, belowFedBand: gross > 0 && incomeBase < PAY.fedFloor,
+    incomeBase,
   };
 };
 
 
-/* 2026 tax tables. Federal from Rev. Proc. 2025-32. The state is a generic
-   example: two brackets, a standard deduction and a personal exemption. */
-const FED_2026 = {
-  single: { label: "Single", std: 16100, otCap: 12500,
-    brackets: [[12400, 0.10], [50400, 0.12], [105700, 0.22], [201775, 0.24], [256225, 0.32], [640600, 0.35], [Infinity, 0.37]] },
-  mfj: { label: "Married filing jointly", std: 32200, otCap: 25000,
-    brackets: [[24800, 0.10], [100800, 0.12], [211400, 0.22], [403550, 0.24], [512450, 0.32], [768700, 0.35], [Infinity, 0.37]] },
-  mfs: { label: "Married filing separately", std: 16100, otCap: 0,
-    brackets: [[12400, 0.10], [50400, 0.12], [105700, 0.22], [201775, 0.24], [256225, 0.32], [384350, 0.35], [Infinity, 0.37]] },
-};
-const STATE_2026 = {
-  single: { std: 3605, exemption: 9160, threshold: 23000 },
-  mfj: { std: 8240, exemption: 18320, threshold: 46000 },
-  mfs: { std: 4120, exemption: 9160, threshold: 23000 },
-  perDependent: 2320, low: 0.052, high: 0.0558,
-};
-const bracketTax = (income, brackets) => {
-  let tax = 0, last = 0;
-  for (const [cap, rate] of brackets) {
-    if (income <= last) break;
-    tax += (Math.min(income, cap) - last) * rate;
-    last = cap;
-  }
-  return Math.max(0, tax);
-};
-const marginalRate = (income, brackets) => {
-  for (const [cap, rate] of brackets) if (income <= cap) return rate;
-  return brackets[brackets.length - 1][1];
-};
+/* The 2026 tax tables and the withholding maths live in src/profile.js. */
 
 const CSV_COLS = [
   ["date", "Date"], ["label", "Label"], ["type", "Type"], ["gross", "Gross"],
@@ -479,7 +484,10 @@ function PaycheckLedger() {
   };
   const switchPayType = (t) => {
     if (t === payType) return;
-    const untouched = swapSample(t, setup);
+    // Hourly pay is counted by the work week, so it's weekly or every two weeks.
+    const su = t === "hourly" && !["weekly", "biweekly"].includes(setup.freq) ? { ...setup, freq: "biweekly" } : setup;
+    const untouched = swapSample(t, su);
+    if (su !== setup) setSetup(su);
     setPayType(t);
     if (untouched) {
       setStatus(t === "salary" ? "Switched to salary, with a salaried sample year." : "Switched to hourly, with an hourly sample year.");
@@ -490,14 +498,21 @@ function PaycheckLedger() {
   // A setup change. While the ledger is still the sample, the sample year is
   // redone to match, so the demo shows what that setup does to a paycheck.
   const changeSetup = (patch) => {
+    // A new pay frequency keeps the same yearly HSA and ESPP: $100 every two
+    // weeks becomes $50 a week.
+    if (patch.freq && patch.freq !== setup.freq) {
+      const k = periodsOf(setup) / periodsOf({ freq: patch.freq });
+      patch = { hsaAmt: Math.round(setup.hsaAmt * k * 100) / 100, esppAmt: Math.round(setup.esppAmt * k * 100) / 100, ...patch };
+    }
     const next = { ...setup, ...patch };
     const untouched = swapSample(payType, next);
     setSetup(next);
+    if (patch.filing) setTax((t) => ({ ...t, status: patch.filing }));   // the W-4 status is usually the return's too
     setFc((f) => ({ ...f, hsa: next.hsa ? next.hsaAmt : f.hsa, espp: next.espp ? next.esppAmt : f.espp }));
     if (untouched) setStatus("The sample year now follows this setup.");
   };
   // Start a ledger of your own: the sample goes, the setup opens.
-  const startOwn = () => {
+  const startOwn = (msg) => {
     setEntries([]);
     setYears([]);
     setRemovedYears([...new Set([...YEARS_SEED, ...(SALARY_YEARS_SEED || [])].map((y) => y.id))]);
@@ -505,8 +520,10 @@ function PaycheckLedger() {
     setForecasts({});
     setEditing(null);
     setOpening({});
+    setHsaEmployer(0);        // the sample's employer deposit isn't yours
+    setHsaEmpPaid(false);
     setSetupOpen(true);
-    setStatus("Sample cleared. Set up what comes out of your checks, then log your first paycheck.");
+    setStatus(typeof msg === "string" ? msg : "Sample cleared. Set up what comes out of your checks, then log your first paycheck.");
   };
   const [removedYears, setRemovedYears] = useState([]);
   const [tax, setTax] = useState({ status: "single", dependents: "", otherIncome: "", otherWithheld: "" });
@@ -731,16 +748,23 @@ function PaycheckLedger() {
       a.date === b.date ? (a.isAdj ? 1 : -1) : (a.date < b.date ? -1 : 1)),
     [entries]
   );
+  // Totals cover one year: the year of the latest paycheck. Earlier years' rows
+  // and rows without a readable date stay in the Log but out of the maths.
+  const dated = rows.filter((r) => isDate(r.date));
+  const ledgerYear = dated.length ? +dated[dated.length - 1].date.slice(0, 4) : new Date().getFullYear();
+  LEDGER_YEAR = ledgerYear;
+  const yearRows = dated.filter((r) => +r.date.slice(0, 4) === ledgerYear);
   // Paychecks drive per-check trends and pacing. Adjustments are W-2 income
   // with no cash movement — they belong in annual gross, nowhere else.
-  const checks = rows.filter((r) => !r.isAdj && r.gross > 0 && !(r.taxTotal === 0 && r.retirement === 0));
-  const adjustments = rows.filter((r) => r.isAdj && r.gross > 0);
+  const checks = yearRows.filter((r) => !r.isAdj && r.gross > 0 && !(r.taxTotal === 0 && r.retirement === 0));
+  const adjustments = yearRows.filter((r) => r.isAdj && r.gross > 0);
   const real = checks;
 
   const ytd = useMemo(() => {
     // Starting totals, when the visitor began logging partway through the year.
     const o = OPENING || {};
-    const sum = (k) => checks.reduce((s, r) => s + r[k], 0) + (o[k] || 0);
+    // n(): fields typed into the form arrive as text ("100.00"), not numbers.
+    const sum = (k) => checks.reduce((s, r) => s + n(r[k]), 0) + (o[k] || 0);
     const adjGross = adjustments.reduce((s, r) => s + r.gross, 0);
     const gross = sum("gross");
     return {
@@ -754,27 +778,16 @@ function PaycheckLedger() {
       logged: checks.length, openingChecks: o.checks || 0,
       adjGross, adjCount: adjustments.length, w2Gross: gross + adjGross,
     };
-  }, [rows, opening, setup]);
+  }, [rows, opening, setup, payType]);
 
-  /* Remaining biweekly pay dates in the year, from your first paycheck. */
-  const remaining = useMemo(() => {
-    if (!checks.length) return 0;
-    const anchor = new Date(checks[0].date + "T12:00:00");
-    const last = new Date(checks[checks.length - 1].date + "T12:00:00");
-    let count = 0;
-    for (let d = new Date(anchor); d.getFullYear() === anchor.getFullYear(); d.setDate(d.getDate() + 14)) {
-      if (d > last) count++;
-    }
-    return count;
-  }, [rows]);
+  /* Remaining pay dates in the year, from the latest paycheck. */
+  /* Pay dates left this year on the setup's schedule, after the latest check. */
+  const remaining = useMemo(() => (checks.length
+    ? payDatesLeft(checks[checks.length - 1].date, setup.freq, ledgerYear).length : 0), [rows, setup.freq]);
 
-  /* Next pay date on the biweekly cycle, so logging a check is one field fewer. */
-  const nextPayDate = useMemo(() => {
-    if (!checks.length) return "";
-    const last = new Date(checks[checks.length - 1].date + "T12:00:00");
-    last.setDate(last.getDate() + 14);
-    return last.toISOString().slice(0, 10);
-  }, [rows]);
+  /* The next pay date on that schedule, so logging a check is one field fewer. */
+  const nextPayDate = useMemo(() => (checks.length
+    ? nextPayDateOf(checks[checks.length - 1].date, setup.freq) : ""), [rows, setup.freq]);
 
   // Still the untouched sample year? Then the demo banner shows, and setup
   // changes redo the sample instead of leaving the visitor's entries alone.
@@ -865,6 +878,7 @@ function PaycheckLedger() {
     const d = parsed && parsed.data ? parsed.data : parsed;
     if (!d || !Array.isArray(d.entries)) { setStatus("That file has no paychecks in it."); return; }
     setEntries(d.entries);
+    setLastBackup({ at: iso(new Date()), sig: ledgerSig(d.entries) });   // it just came from a backup
     if (d.limit) setLimit(d.limit);
     if (d.hsaLimit) setHsaLimit(d.hsaLimit);
     if (d.hsaEmployer !== undefined) setHsaEmployer(d.hsaEmployer);
@@ -896,6 +910,7 @@ function PaycheckLedger() {
       return;
     }
     const parsed = [];
+    let badDates = 0;
     for (let i = 1; i < lines.length; i++) {
       const cells = splitCSVLine(lines[i]);
       if (!cells.length || !cells[idx.date]) continue;
@@ -908,18 +923,18 @@ function PaycheckLedger() {
         o[k] = TEXT.includes(k) ? raw : n(raw);
       });
       if (o.type && o.type !== "adjustment") o.type = "paycheck";
-      if (o.date) parsed.push(o);
+      if (o.date) { const d = toIsoDate(o.date); if (d) { o.date = d; parsed.push(o); } else badDates++; }
     }
-    if (!parsed.length) { setStatus("Couldn't read any rows out of that file."); return; }
+    if (!parsed.length) { setStatus(badDates ? `Couldn't read the dates in that file (${badDates} rows). Use YYYY-MM-DD or M/D/YYYY.` : "Couldn't read any rows out of that file."); return; }
     if (mode === "replace") {
       setEntries(parsed);
-      setStatus(`Replaced the ledger with ${parsed.length} rows.`);
+      setStatus(`Replaced the ledger with ${parsed.length} rows.${badDates ? ` Skipped ${badDates} with dates it couldn't read.` : ""}`);
     } else {
       const key = (e) => `${e.date}|${e.type || "paycheck"}`;
       const seen = new Set(entries.map(key));
       const added = parsed.filter((p) => !seen.has(key(p)));
       setEntries([...entries, ...added]);
-      setStatus(`Added ${added.length} rows, skipped ${parsed.length - added.length} already logged.`);
+      setStatus(`Added ${added.length} rows, skipped ${parsed.length - added.length} already logged.${badDates ? ` ${badDates} more had dates it couldn't read.` : ""}`);
     }
   };
 
@@ -978,7 +993,7 @@ function PaycheckLedger() {
             nextPayDate={nextPayDate} />
         )}
         {tab === "forecast" && (
-          <ForecastTab fc={fc} setFc={setFc} changeSetup={changeSetup} rows={rows} weekLog={weekLog} setWeekLog={setWeekLog}
+          <ForecastTab fc={fc} setFc={setFc} changeSetup={changeSetup} rows={yearRows} weekLog={weekLog} setWeekLog={setWeekLog}
             forecasts={forecasts} setForecasts={setForecasts}
             onLog={(entry) => { setEditing(entry); setTab("log"); }} />
         )}
@@ -992,7 +1007,7 @@ function PaycheckLedger() {
         )}
         {tab === "checks" && <ChecksTab rows={rows} />}
         {tab === "tax" && (
-          <TaxOutlookTab rows={rows} ytd={ytd} remaining={remaining} fc={fc} tax={tax} setTax={setTax}
+          <TaxOutlookTab rows={yearRows} ytd={ytd} remaining={remaining} fc={fc} tax={tax} setTax={setTax}
             limit={limit} hsaLimit={hsaLimit} hsaEmployer={hsaEmployer}
             hsaEmpPaid={hsaEmpPaid} hsaEmpDate={hsaEmpDate} />
         )}
@@ -1003,8 +1018,8 @@ function PaycheckLedger() {
             years={years} downloadBackup={downloadBackup} restoreBackup={restoreBackup}
             backupText={backupText} setBackupText={setBackupText}
             confirmReset={confirmReset} setConfirmReset={setConfirmReset}
-            reset={() => { setEntries([]); setConfirmReset(false); setStatus("Ledger cleared."); }}
-            reseed={() => { const sm = sampleFor(payType, setup); setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setConfirmReset(false); setStatus("Reloaded the sample year."); }} />
+            reset={() => { setConfirmReset(false); startOwn("Everything cleared. Check your setup, then log your first paycheck."); setTab("log"); }}
+            reseed={() => { const sm = sampleFor(payType, setup); setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setHsaEmployer(500); setConfirmReset(false); setStatus("Reloaded the sample year."); }} />
         )}
       </div>
     </div>
@@ -1025,7 +1040,7 @@ function Header({ ytd, remaining, flagCount }) {
       <div className="flex items-baseline justify-between flex-wrap gap-2">
         <h1 className="text-2xl" style={{ fontWeight: 700, letterSpacing: "-0.02em" }}>Paycheck ledger <span style={{ fontSize: "0.6em", fontWeight: 600, color: C.accent }}>demo</span></h1>
         <div className="text-xs uppercase tracking-wider" style={{ color: C.muted }}>
-          2026 · {ytd.count} paycheck{ytd.count === 1 ? "" : "s"} · {remaining} to go
+          {LEDGER_YEAR} · {ytd.count} paycheck{ytd.count === 1 ? "" : "s"} · {remaining} to go
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 mt-4 rounded"
@@ -1061,7 +1076,7 @@ function Header({ ytd, remaining, flagCount }) {
 /* ---------------- log tab --------------------------------------- */
 /* Why this paycheck differs from the one before it, biggest cause first. */
 function PaycheckDiff({ rows }) {
-  const checks = rows.filter((r) => !r.isAdj && r.gross > 0);
+  const checks = rows.filter((r) => !r.isAdj && r.gross > 0 && isDate(r.date) && r.date.startsWith(String(LEDGER_YEAR)));
   if (checks.length < 2) return null;
   const now = checks[checks.length - 1], prev = checks[checks.length - 2];
   const lines = [
@@ -1292,7 +1307,7 @@ function WhatIfPanel({ fcCalc, f, changeSetup, setFc }) {
                     {Math.abs(delta) < 0.005 ? "—" : `${delta > 0 ? "+" : "−"}${money(Math.abs(delta))}`}
                   </td>
                   <td className="py-1.5 pl-2 text-right whitespace-nowrap hidden sm:table-cell" style={{ fontFamily: MONO, color: C.muted }}>
-                    {Math.abs(delta) < 0.005 ? "—" : `${delta > 0 ? "+" : "−"}${money(Math.abs(delta * 26))}`}
+                    {Math.abs(delta) < 0.005 ? "—" : `${delta > 0 ? "+" : "−"}${money(Math.abs(delta * PER_YEAR()))}`}
                   </td>
                 </tr>
               );
@@ -1305,7 +1320,7 @@ function WhatIfPanel({ fcCalc, f, changeSetup, setFc }) {
         {!changed ? "Change anything above to compare it with your setup."
           : Math.abs(dCheck) < 0.005 && !notes.length ? "No difference to a regular check."
           : <>Each check: {word(dCheck, "more", "less")} in checking{notes.length ? `, with ${notes.join(", ")}` : ""}.
-              {" "}Over a year of 26 checks, that's {word(dCheck * 26, "more", "less")} landing in checking.
+              {" "}Over a year of {PER_YEAR()} checks, that's {word(dCheck * PER_YEAR(), "more", "less")} landing in checking.
               {wi.retire === "traditional" && SETUP.retire !== "traditional" && " A traditional 401k is taxed when you take it out in retirement; a Roth isn't."}</>}
       </div>
 
@@ -1334,6 +1349,7 @@ const ledgerSig = (entries) => {
 function SetupBar({ payType, fc, open, setOpen }) {
   const parts = [
     payType === "salary" ? `Salary ${money(n(fc.salary))} a year` : `Hourly ${money(curRate())}`,
+    `paid ${FREQ_LABEL[SETUP.freq || "biweekly"].toLowerCase()}`,
     HAS_HSA ? `HSA ${money(SETUP.hsaAmt)}` : "No HSA",
     HAS_RETIRE ? `${retireLabel()} ${pctLabel(SETUP.retirePct)}` : "No 401k",
     HAS_ESPP ? `ESPP ${money(SETUP.esppAmt)}` : "No ESPP",
@@ -1408,6 +1424,17 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
             ? <NumField label="Yearly salary $" value={n(fc.salary)} onChange={(v) => setFc((f) => ({ ...f, salary: v }))} />
             : <NumField label="Hourly rate $" value={n(fc.rate)} onChange={(v) => setFc((f) => ({ ...f, rate: v }))} />}
         </div>
+      </>)}
+
+      {section("How often you're paid", payType === "salary" ? null : "Hourly pay is weekly or every two weeks, since overtime is counted by the work week.", <>
+        <Choice label="Pay frequency"
+          options={(payType === "salary" ? ["weekly", "biweekly", "semimonthly", "monthly"] : ["weekly", "biweekly"]).map((k) => [k, FREQ_LABEL[k]])}
+          value={setup.freq || "biweekly"} onPick={(v) => changeSetup({ freq: v })} />
+      </>)}
+
+      {section("Filing status on your W-4", "Payroll uses it to work out federal and state withholding.", <>
+        <Choice label="W-4 filing status" options={[["single", "Single"], ["mfj", "Married filing jointly"], ["mfs", "Married filing separately"]]}
+          value={setup.filing || "single"} onPick={(v) => changeSetup({ filing: v })} />
       </>)}
 
       {section("HSA", "Only possible with a high-deductible (CDHP/HDHP) health plan. Comes out before all tax.", <>
@@ -1783,6 +1810,9 @@ function LedgerTable({ rows, onEdit }) {
                     )}
                   </div>
                   <div className="text-xs" style={{ color: C.muted, fontFamily: MONO }}>{r.date}</div>
+                  {!isDate(r.date)
+                    ? <div className="text-xs" style={{ color: C.red }}>date can't be read · not in totals</div>
+                    : !r.date.startsWith(String(LEDGER_YEAR)) && <div className="text-xs" style={{ color: C.amber }}>{r.date.slice(0, 4)} · not in {LEDGER_YEAR} totals</div>}
                 </td>
                 {money7.map(([, k]) => r[k]).map((v, i) => (
                   <td key={i} className="text-right px-3 py-2 whitespace-nowrap" style={{ fontFamily: MONO }}>
@@ -2218,7 +2248,7 @@ function PredictedStub({ f }) {
         </React.Fragment>
       ))}
       {f.salaryPay > 0 &&
-        line(`Salary · ${money(f.salary)} a year ÷ 26`, f.salaryPay, { indent: true, dim: true })}
+        line(`Salary · ${money(f.salary)} a year ÷ ${PER_YEAR()}`, f.salaryPay, { indent: true, dim: true })}
       {f.premPay > 0 &&
         line(`${PAY_TYPE === "salary" ? "Bonus or extra pay" : "Premium pay"}${PAY_TYPE !== "salary" && f.premHrs ? ` · ${f.premHrs.toFixed(2)} hrs` : ""}`, f.premPay, { indent: true, dim: true })}
       {line("Gross pay", f.gross, { bold: true, rule: true })}
@@ -2249,7 +2279,7 @@ function WeekLogPanel({ weekLog, setWeekLog, payDate, rate, rows }) {
   const thisSat = saturdayOf(today);
   const forecastKeys = weekEndingsFor(payDate);
 
-  /* Once a paycheck is logged it IS the record for its two weeks — the stub
+  /* Once a paycheck is logged it IS the record for its week(s) — the stub
      gives period totals, so re-typing the weeks adds nothing and the blank
      boxes used to report zero overtime for weeks that plainly had some.
      Show a week only while its paycheck is still outstanding. */
@@ -2360,7 +2390,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
   const bump = PAY_TYPE === "salary"
     ? forecast({ ...fcCalc, salary: n(fc.salary) + 1000 })
     : forecast({ ...fcCalc, weeks: weeks.map((w, j) =>
-      j === 1 ? { ...w, ot: n(w.ot) + 1 } : w) });
+      j === weeks.length - 1 ? { ...w, ot: n(w.ot) + 1 } : w) });
   const dGross = bump.gross - f.gross;
   const dCheck = bump.takeHome - f.takeHome;
   const dRetire = bump.retirement - f.retirement;
@@ -2393,8 +2423,8 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
 
       <Panel title={PAY_TYPE === "salary" ? "Pay for this period" : "Hours for this pay period"}
         note={PAY_TYPE === "salary"
-          ? "Each check is your yearly salary divided by 26. Add a bonus below if this one has one."
-          : "The same two weeks as the shaded rows above — edit in either place."}>
+          ? `Each check is your yearly salary divided by ${PER_YEAR()}. Add a bonus below if this one has one.`
+          : `The same ${WEEKLY() ? "week" : "two weeks"} as the shaded rows above — edit in either place.`}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <label>
             <div className="text-xs mb-1" style={{ color: C.muted }}>Pay date</div>
@@ -2403,7 +2433,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
               style={{ fontFamily: MONO, border: `1px solid ${C.rule}`, background: C.paper, color: C.ink }} />
           </label>
           {PAY_TYPE === "salary"
-            ? <MoneyField label="Yearly salary" value={fc.salary} onChange={setTop("salary")} hint="÷ 26 per check" />
+            ? <MoneyField label="Yearly salary" value={fc.salary} onChange={setTop("salary")} hint={`÷ ${PER_YEAR()} per check`} />
             : <HoursField label="Hourly rate" value={fc.rate} onChange={setTop("rate")} />}
           {HAS_HSA && <MoneyField label="HSA" value={fc.hsa} onChange={setTop("hsa")} hint="" />}
           {HAS_ESPP && <MoneyField label="ESPP" value={fc.espp} onChange={setTop("espp")} />}
@@ -2436,7 +2466,7 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
             );
           })}
         </div>
-        {n(weeks[1].ot) === 0 && (
+        {weeks.length > 1 && n(weeks[1].ot) === 0 && (
           <div className="text-sm mt-3 px-3 py-2 rounded" style={{ background: C.amberSoft, color: C.amber }}>
             Week 2 has no overtime entered yet. The figures below assume none — fill it in once {ranges[1].split("–")[1]} closes out.
           </div>
@@ -2491,14 +2521,6 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
           </div>
         </div>
 
-        {f.belowFedBand && (
-          <div className="text-sm mt-3 px-3 py-2 rounded" style={{ background: C.amberSoft, color: C.amber }}>
-            Taxable wages of {money(f.incomeBase)} fall below every paycheck the federal formula was
-            checked against, so this check may sit in a lower withholding bracket. Social Security,
-            Medicare and state are still exact — treat only the federal line as approximate, and
-            expect the real figure to come in lower rather than higher.
-          </div>
-        )}
 
         <div className="flex flex-wrap gap-2 mt-4">
           <button onClick={() => setForecasts({ ...forecasts, [fc.payDate]: {
@@ -2529,11 +2551,10 @@ function ForecastTab({ fc, setFc, changeSetup, rows, onLog, weekLog, setWeekLog,
       <Panel title="How the prediction is built"
         note="These are the rules this ledger applies. In your own copy you would fit the two offsets to your own stubs.">
         <ul className="text-sm space-y-1" style={{ color: C.muted }}>
-          <li>· {PAY_TYPE === "salary" ? "Gross = yearly salary ÷ 26, plus any bonus" : "Gross = rate × (regular + holiday + PTO), plus overtime paid as straight time and a half-time premium, rounded separately"}</li>
+          <li>· {PAY_TYPE === "salary" ? `Gross = yearly salary ÷ ${PER_YEAR()}, plus any bonus` : "Gross = rate × (regular + holiday + PTO), plus overtime paid as straight time and a half-time premium, rounded separately"}</li>
           <li>· Withholding base = gross{HAS_HSA ? " − HSA" : ""} − {money(PAY.dentalPreTax)} (only part of the dental premium comes off)</li>
           <li>· Social Security 6.2% and Medicare 1.45% of that base — exact</li>
-          <li>· State 5.58% of the base less {money(PAY.stateOffset)}</li>
-          <li>· Federal 22% of the base less {money(PAY.fedOffset)}</li>
+          <li>· Federal and state: the base{SETUP.retire === "traditional" ? " less the traditional 401k" : ""}, times {PER_YEAR()} checks a year, through the 2026 brackets after the standard deduction ({FED_2026[SETUP.filing || "single"].label.toLowerCase()} on the W-4), divided back by {PER_YEAR()}. Payroll's percentage method works the same way.</li>
           {SETUP.retire === "traditional" && <li>· Federal and state use that base less the traditional 401k</li>}
           <li>· {HAS_RETIRE ? `${retireLabel()} ${pctLabel(SETUP.retirePct)} of gross` : "No 401k"}; {HAS_SAVINGS ? `savings transfers ${pctLabel(SETUP.savingsPct)} of net pay` : "no savings transfers"}</li>
         </ul>
@@ -2669,7 +2690,7 @@ function OvertimePanel({ rows, ytd, remaining }) {
   // Rough: a period can carry more than 80 straight hours with no overtime.
   const perCheck = checks.map((r) => {
     if (r.hasHours) return { r, hrs: r.otH, prem: r.otPremium, est: false };
-    const hrs = Math.max(0, (r.gross - 80 * r.payRate) / (1.5 * r.payRate));
+    const hrs = Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate));
     return { r, hrs, prem: Math.round(hrs * r.payRate * 50) / 100, est: true };
   });
   const logged = perCheck.filter((x) => !x.est);
@@ -2913,14 +2934,13 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
     + (o.gross - o.hsa - PAY.dentalPreTax * o.checks - (trad ? o.retirement : 0));
   const avgGross = checks.length ? checks.reduce((s, r) => s + r.gross, 0) / checks.length
     : (o.checks ? o.gross / o.checks : 0);
-  const futureHsa = HAS_HSA ? (n(fc.hsa) || 80) : 0;
+  const futureHsa = HAS_HSA ? SETUP.hsaAmt : 0;
   const futureWage = Math.max(0, avgGross - futureHsa - PAY.dentalPreTax
     - (trad ? avgGross * SETUP.retirePct : 0));
   const wagesProjected = wagesYTD + futureWage * remaining;
 
   // Withholding: what's been taken, plus the same formula payroll uses.
-  const fedPerCheck = Math.max(0, futureWage * PAY.fedRate - PAY.fedOffset);
-  const stPerCheck = Math.max(0, futureWage * PAY.stateRate - PAY.stateOffset);
+  const { federal: fedPerCheck, state: stPerCheck } = withholding(futureWage, SETUP);
   const fedYTD = checks.reduce((s, r) => s + n(r.federal), 0) + o.federal;
   const stYTD = checks.reduce((s, r) => s + n(r.state), 0) + o.state;
   const fedProjected = fedYTD + fedPerCheck * remaining + n(tax.otherWithheld);
@@ -2929,7 +2949,7 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
   // Qualifying overtime: from hours where entered, estimated from gross otherwise.
   const otPremium = PAY_TYPE === "salary" ? 0 : checks.reduce((s, r) => {
     if (r.hasHours) return s + r.otPremium;
-    const hrs = Math.max(0, (r.gross - 80 * r.payRate) / (1.5 * r.payRate));
+    const hrs = Math.max(0, (r.gross - hoursPerCheck() * r.payRate) / (1.5 * r.payRate));
     return s + hrs * r.payRate * 0.5;
   }, 0);
   const otProjected = otPremium + o.otPremium
@@ -2944,9 +2964,7 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
 
   const deps = n(tax.dependents);
   const stTaxable = Math.max(0, agi - K.std - K.exemption - deps * STATE_2026.perDependent);
-  const stTax = stTaxable <= K.threshold
-    ? stTaxable * STATE_2026.low
-    : K.threshold * STATE_2026.low + (stTaxable - K.threshold) * STATE_2026.high;
+  const stTax = stateTax(stTaxable, status);
   const stDiff = stProjected - stTax;
 
   const total = fedDiff + stDiff;
@@ -2966,7 +2984,12 @@ function TaxOutlookTab({ rows, ytd, remaining, fc, tax, setTax, limit, hsaLimit,
 
   return (
     <div className="space-y-4">
-      <Panel title="Where 2026 lands"
+      {LEDGER_YEAR !== 2026 && (
+        <div className="px-3 py-2 rounded text-sm" style={{ background: C.amberSoft, color: C.amber }}>
+          These tax tables are 2026's, and this ledger is for {LEDGER_YEAR}. Treat the outlook below as rough until the tables are updated.
+        </div>
+      )}
+      <Panel title={`Where ${LEDGER_YEAR} lands`}
         note="Projected from your logged paychecks: what your W-2 will show, what tax is actually due, and what payroll will have withheld by then.">
         <div className="rounded p-4" style={{ background: good ? C.greenSoft : C.amberSoft }}>
           <div className="text-xs uppercase tracking-wider" style={{ color: good ? C.green : C.amber }}>
@@ -3538,7 +3561,7 @@ function ChecksTab({ rows }) {
           <li>· Every dollar of gross should land in a category</li>
           <li>· Retirement should hold at 20.00% of gross</li>
           {PAY_TYPE !== "salary" && <li>· When hours are entered, hours × rate should equal gross, at the rate on that paycheck</li>}
-          <li>· Paychecks should arrive every 14 days with none skipped</li>
+          <li>· Paychecks should arrive {FREQ_LABEL[SETUP.freq || "biweekly"].toLowerCase()} with none skipped</li>
         </ul>
         <div className="text-sm mt-3" style={{ color: C.muted }}>
           W-2 adjustments skip all of this. Nothing was withheld and no cash moved, so there is nothing to reconcile.
@@ -3550,7 +3573,7 @@ function ChecksTab({ rows }) {
 
       {gaps.length > 0 && (
         <Panel title={`${gaps.length} paycheck${gaps.length === 1 ? "" : "s"} missing`}
-          note="Your pay lands every 14 days, and these dates have nothing logged.">
+          note={`Your pay lands ${FREQ_LABEL[SETUP.freq || "biweekly"].toLowerCase()}, and these dates have nothing logged.`}>
           <div className="space-y-1">
             {gaps.map((g) => (
               <div key={g.expected} className="text-sm px-2 py-1.5 rounded"
@@ -3755,7 +3778,7 @@ function DataTab({ rows, exportCSV, importCSV, csvText, setCsvText, years, downl
             <span className="text-sm" style={{ color: C.red }}>
               {confirmReset === "reseed"
                 ? `This replaces all ${rows.length} rows with the invented sample year. Back up first if you want to keep them.`
-                : `This erases all ${rows.length} paychecks, on every device. Export first if you haven't.`}
+                : `This erases all ${rows.length} paychecks, your past years and starting totals. Back up first if you want to keep them.`}
             </span>
             <button onClick={confirmReset === "reseed" ? reseed : reset} className="px-3 py-1.5 rounded text-sm"
               style={{ background: C.red, color: C.card, fontWeight: 600 }}>
