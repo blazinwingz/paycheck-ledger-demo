@@ -1,7 +1,8 @@
 """Browser test for the demo build. Run `npm run build` first.
 
 Opens dist/paycheck-ledger.html in Chromium with no Claude account features
-(as a visitor sees it) and clicks every tab. Then the setup: hourly or salary
+(as a visitor sees it): a first visit opens empty with the setup showing; then it
+loads the example year and clicks every tab. Then the setup: hourly or salary
 (sample swap, salary math, hidden hours/overtime), HSA, 401k type, ESPP, reload
 memory. Then starting a ledger of your own: starting totals for a mid-year
 start, logging a first paycheck, the backup reminder, and reload memory.
@@ -41,8 +42,15 @@ with sync_playwright() as pw:
     gross = lambda: stat(up(), "PAYROLL GROSS YTD")
     taxes = lambda: stat(up(), "TAXES YTD")
 
-    check("every figure here is invented" in body(), "demo banner shows")
-    check("Saved in this browser only" in body(), "says where entries are saved")
+    # A first visit opens empty, with the setup showing and nothing assumed.
+    t = body()
+    check("SET UP YOUR LEDGER" in up() and "Welcome." in t and "Hourly rate not set" in t and "No HSA" in t,
+          "first visit: empty ledger, blank setup open")
+    check("Saved in this browser only" in t, "says where entries are saved")
+    for tb in TABS: tab(tb)
+    x = body(); check("NaN" not in x and "Infinity" not in x and "Something broke" not in x, "first visit: every tab works empty")
+    tab("Log"); pg.get_by_role("button", name="Try the example year").click(); pg.wait_for_timeout(500)
+    check("every figure here is invented" in body() and "Hourly $25.00" in body(), "try the example year: sample and example setup load")
     for t in TABS: tab(t)
     hourly = gross()
 
