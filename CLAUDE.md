@@ -52,7 +52,7 @@ already be installed globally; link them into `node_modules`.
 by the root component on every render, the same pattern as the theme palette `C`.
 Components read them directly. Salary mode:
 
-- `forecast()` gets `payType: "salary"`: gross is `salary / 26 + bonus`, no weeks.
+- `forecast()` gets `payType: "salary"`: gross is `salary / checks a year + bonus`, no weeks.
 - Hides the week log, hour fields, the earnings rows on the entry form, the hours
   and overtime panels on Trends, the overtime deduction on the tax tab, and the
   pay rate history.
@@ -68,7 +68,9 @@ Components read them directly. Salary mode:
 ## How the setup works
 
 The setup (`setup` state, `SETUP` at module level, set by the root on every
-render like `PAY_TYPE`) says what comes out of a check: `hsa`/`hsaAmt`,
+render like `PAY_TYPE`) says how often pay comes and what comes out of a check:
+`freq` (weekly, biweekly, semimonthly, monthly; hourly is weekly or biweekly
+only), `filing` (the W-4 status), `hsa`/`hsaAmt`,
 `retire` ("roth", "traditional" or "none")/`retirePct`, `espp`/`esppAmt`, and
 `savingsPct`. `HAS_HSA`, `HAS_RETIRE`, `HAS_ESPP` and `HAS_SAVINGS` hide what a
 visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
@@ -77,6 +79,15 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
   forecast uses it, and so does the sample: `sampleFor(payType, setup)` redoes
   the sample paychecks and past years for any setup. With the default setup it
   returns the stored sample unchanged.
+- **Withholding** (`withholding()` in profile.js) annualizes the check (× checks
+  a year), runs the 2026 brackets after the standard deduction for the W-4
+  status, and divides back down: right in every bracket and at every frequency.
+  The tax tables live in profile.js too.
+- **Pay frequency** drives checks a year (`PER_YEAR()`), salary per check, the
+  forecast's weeks (one for weekly), pay dates (`nextPayDate`, `payDatesLeft`:
+  twice a month is the 15th and last day), missing-check warnings, and the
+  what-if's per-year column. Changing it rescales per-check HSA and ESPP so the
+  yearly amounts stay the same. `sampleChecksFor()` lays the sample out for it.
 - **Traditional 401k** comes off before federal and state income tax only, so it
   lowers those two lines, the tax outlook's wages and the W-2 Box 1 check. Not
   Social Security or Medicare.
@@ -91,18 +102,27 @@ visitor doesn't have: form fields, Log columns, panels, checklist items, labels.
 - The pay rate history is built from the ledger's own past years plus the
   current rate, not from a fixed list.
 - **What if** (`WhatIfPanel`, Forecast tab): runs `forecast()` with a trial
-  setup and pay next to the real one, per check and ×26 per year. Nothing
+  setup and pay next to the real one, per check and per year. Nothing
   changes until "Make this my setup", which calls `changeSetup`. It resyncs to the
   setup whenever the setup or pay changes. Its button groups are labelled
   "What-if 401k" and so on, so tests can tell them from the setup panel's.
+- **One year at a time.** Totals cover `LEDGER_YEAR`, the year of the latest
+  paycheck. Rows from other years, or with a date `isDate()` can't read, stay
+  in the Log (tagged) and on the Checks tab, but out of every total. Pass
+  `yearRows`, not `rows`, to anything that adds things up. The tax tables are
+  2026's; the Tax outlook says so when the ledger year differs.
+- **Form fields arrive as text** ("100.00"). Wrap any raw entry field in `n()`
+  before adding it up; `derive()` only converts the main money columns.
 - `lastBackup` remembers when a backup was last made and a fingerprint of the
   paychecks, so the page can say when there's work that hasn't been backed up.
 
 ## Changing the sample data
 
-The sample paychecks in `src/seed.example.js` were generated from the `PAY`
-constants. `tests/run.mjs` recomputes every one, so if you change a constant or
-add a check, regenerate the samples from the formulas rather than typing numbers.
+The sample paychecks in `src/seed.example.js` are generated from the formulas by
+`node tools/gen-samples.mjs` (gross, hours and dates are kept; every deduction
+is recomputed). `tests/run.mjs` recomputes every one independently, at every
+frequency and in several setups. If you change a constant or a formula, rerun
+the generator rather than typing numbers.
 The state tax is a generic example state, and the tax tables are 2026 figures.
 
 ## Working with the owner
