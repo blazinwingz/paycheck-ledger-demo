@@ -48,7 +48,7 @@ const sampleFor = (type, setup) => {
 // Version numbers are major.minor.patch, the same as package.json "version":
 //   patch (1.0.0 → 1.0.1) bug fixes · minor (→ 1.1.0) a new feature ·
 //   major (→ 2.0.0) a big overhaul or a change that breaks saved ledgers/backups.
-const BUILD = { version: "1.0.0", date: "2026-10-03" };
+const BUILD = { version: "1.1.0", date: "2026-10-03" };
 
 /* ---------------------------------------------------------------
    Palette + type. Cool ink-on-paper, drawn from the pay stub itself:
@@ -534,6 +534,15 @@ function PaycheckLedger() {
     setSetupOpen(true);
     setStatus(typeof msg === "string" ? msg : "Sample cleared. Enter your pay and anything that comes out of your checks, then log your first paycheck.");
   };
+  // The example year, with its own example setup, rate and salary.
+  const loadSample = (msg) => {
+    const su = defaultSetup(PAY), sm = sampleFor(payType, su);
+    setSetup(su); setFc((f) => ({ ...f, rate: PAY.rate, salary: PAY.salary || 0, hsa: su.hsaAmt, espp: su.esppAmt }));
+    setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setHsaEmployer(500);
+    setOpening({}); setSetupOpen(false); setTab("log");
+    setStatus(typeof msg === "string" ? msg
+      : "This is an example year of invented paychecks. Change the setup, log one, or try the forecast. Start my own ledger clears it when you're ready.");
+  };
   const [removedYears, setRemovedYears] = useState([]);
   const [tax, setTax] = useState({ status: "single", dependents: "", otherIncome: "", otherWithheld: "" });
   // Hours logged week by week, keyed by the Saturday the week ends on. The
@@ -650,11 +659,12 @@ function PaycheckLedger() {
 
   useEffect(() => {
     let unsub = null, cancelled = false;
+    // A first visit opens an empty ledger with the setup showing. The example
+    // year is one click away ("Try the example year").
     const startFresh = () => {
       justLoaded.current = true;
       base.current = null;
-      setEntries(SEED);
-      setStatus("This is a sample year of invented paychecks. Change the setup, log one, or try the forecast. Start my own ledger clears it when you're ready.");
+      startOwn("Welcome. Enter your pay and anything that comes out of your checks, then log your first paycheck. Want to look around first? Try the example year.");
       setReady(true);
     };
     const fromDevice = () => {
@@ -982,19 +992,19 @@ function PaycheckLedger() {
           ))}
         </nav>
 
-        <SetupBar payType={payType} fc={fc} open={setupOpen} setOpen={setSetupOpen} />
-        {setupOpen && (
-          <SetupPanel payType={payType} switchPayType={switchPayType} setup={setup} changeSetup={changeSetup}
-            fc={fc} setFc={setFc} opening={opening} setOpening={setOpening} onClose={() => setSetupOpen(false)} />
-        )}
         <SaveNote syncMode={syncMode} isSample={isSample} entries={entries} lastBackup={lastBackup}
-          startOwn={startOwn} goBackup={() => setTab("data")} />
+          startOwn={startOwn} goBackup={() => setTab("data")} loadSample={loadSample} />
         {status && (
           <div className="mb-4 px-3 py-2 text-sm rounded flex items-start justify-between gap-3"
             style={{ background: C.accentSoft, color: C.accent }}>
             <span>{status}</span>
             <button onClick={() => setStatus("")} style={{ color: C.accent }} className="shrink-0">×</button>
           </div>
+        )}
+        <SetupBar payType={payType} fc={fc} open={setupOpen} setOpen={setSetupOpen} />
+        {setupOpen && (
+          <SetupPanel payType={payType} switchPayType={switchPayType} setup={setup} changeSetup={changeSetup}
+            fc={fc} setFc={setFc} opening={opening} setOpening={setOpening} onClose={() => setSetupOpen(false)} />
         )}
 
         {tab === "log" && (
@@ -1028,13 +1038,7 @@ function PaycheckLedger() {
             backupText={backupText} setBackupText={setBackupText}
             confirmReset={confirmReset} setConfirmReset={setConfirmReset}
             reset={() => { setConfirmReset(false); startOwn("Everything cleared. Check your setup, then log your first paycheck."); setTab("log"); }}
-            reseed={() => {
-              // The sample comes back with its own example setup, rate and salary.
-              const su = defaultSetup(PAY), sm = sampleFor(payType, su);
-              setSetup(su); setFc((f) => ({ ...f, rate: PAY.rate, salary: PAY.salary || 0, hsa: su.hsaAmt, espp: su.esppAmt }));
-              setEntries(sm.entries); setYears(sm.years); setRemovedYears([]); setHsaEmployer(500);
-              setConfirmReset(false); setStatus("Reloaded the sample year, with its example setup.");
-            }} />
+            reseed={() => { setConfirmReset(false); loadSample("Reloaded the sample year, with its example setup."); }} />
         )}
       </div>
     </div>
@@ -1508,7 +1512,7 @@ function SetupPanel({ payType, switchPayType, setup, changeSetup, fc, setFc, ope
 
 /* Where the ledger is saved, said plainly, and a nudge when there's work that
    hasn't been backed up. */
-function SaveNote({ syncMode, isSample, entries, lastBackup, startOwn, goBackup }) {
+function SaveNote({ syncMode, isSample, entries, lastBackup, startOwn, goBackup, loadSample }) {
   const [confirm, setConfirm] = useState(false);
   if (syncMode === "connecting") return <div className="mb-3 text-xs" style={{ color: C.muted }}>Connecting…</div>;
   if (syncMode === "account") return (
@@ -1517,6 +1521,12 @@ function SaveNote({ syncMode, isSample, entries, lastBackup, startOwn, goBackup 
   const unsaved = !isSample && entries.length > 0 && (!lastBackup || lastBackup.sig !== ledgerSig(entries));
   return (
     <div className="mb-3 text-xs space-y-1" style={{ color: C.muted }}>
+      {!isSample && entries.length === 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>New here? Every figure in the example year is invented.</span>
+          <button onClick={() => loadSample()} className="underline" style={{ color: C.accent }}>Try the example year</button>
+        </div>
+      )}
       {isSample && (
         <div className="flex flex-wrap items-center gap-2">
           <span>Demo: every figure here is invented. Try anything.</span>
