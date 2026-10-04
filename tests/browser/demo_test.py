@@ -146,6 +146,16 @@ with sync_playwright() as pw:
     pg.get_by_role("button", name="Clear it and set up").click(); pg.wait_for_timeout(500)
     check("Sample cleared" in body() and "SET UP YOUR LEDGER" in up(), "start my own: sample cleared, setup open")
     check("every figure here is invented" not in body(), "start my own: demo banner gone")
+    t = body()
+    check("Hourly rate not set" in t and "No HSA" in t and "No 401k" in t and "No ESPP" in t and "No savings transfers" in t,
+          "start my own: setup starts blank (no rate, HSA, 401k, ESPP or savings)")
+    check(all(pressed(g, "None") for g in ["HSA", "401k", "ESPP"]), "start my own: HSA, 401k and ESPP set to None")
+    rate_box = pg.get_by_label("Hourly rate $", exact=True)
+    check(rate_box.input_value() == "", "start my own: hourly rate box is empty")
+    for tb in TABS: tab(tb)
+    x = body()
+    check("NaN" not in x and "Infinity" not in x and "$25.00" not in x, "blank rate: nothing breaks, no leftover $25 rate")
+    tab("Log")
     tab("Past years"); check("2024" not in body() and "2025" not in body(), "start my own: sample past years gone")
     pg.get_by_role("button", name="Starting partway through the year?").click(); pg.wait_for_timeout(200)
     for label, v in [("Paychecks already paid", "10"), ("Gross pay", "20000"), ("Federal tax", "1500"),
@@ -201,6 +211,10 @@ with sync_playwright() as pw:
     tab("Backup"); pg.get_by_role("button", name="Clear the ledger").click(); pg.wait_for_timeout(200)
     pg.get_by_role("button", name="Erase everything").click(); pg.wait_for_timeout(500)
     check("SET UP YOUR LEDGER" in up() and "Everything cleared" in body(), "erase everything: clears and opens the setup")
+    tab("Backup"); pg.get_by_role("button", name="Reload the sample year").click(); pg.wait_for_timeout(200)
+    pg.get_by_role("button", name="Replace with the sample year").click(); pg.wait_for_timeout(500)
+    check("Hourly $25.00" in body() and "Roth 401k 20%" in body() and "every figure here is invented" in body(),
+          "reload the sample: example setup and rate come back")
     browser.close()
 
 print("\n".join(results))
