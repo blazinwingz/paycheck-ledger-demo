@@ -1,134 +1,210 @@
-# Paycheck Ledger Demo
+# Paycheck Ledger
 
 A single-page app for logging paychecks, forecasting the next one, and tracking
-where the year's taxes are heading, shown here with **invented data**.
+tax position across years. It reproduces one real payroll run to the cent: the
+withholding formulas were reverse-engineered from actual stubs, so a predicted
+paycheck matches the real one exactly when the hours are right.
 
-A **setup** panel says how you're paid and what comes out of each check: hourly
-or salary; weekly, every two weeks, twice a month or monthly (hourly pay is
-weekly or every two weeks); your W-4 filing status; health, dental and vision
-premiums; an HSA or not (it needs a high-deductible, or CDHP, health plan); a
-Roth, traditional or no 401k, and what percent; an ESPP or not; and what share
-of each check goes to savings. Anything you don't have disappears from the app.
-While the sample year is showing, it's redone to match whatever you pick.
+Everything is one self-contained HTML file. No server, no framework at runtime,
+no network requests once it loads.
 
-A first visit opens an empty ledger with the setup showing. **Try the example
-year** loads an invented sample to look around in, and **Start my own ledger**
-clears it again. If you start
-partway through the year, copy the year-to-date column from your last stub into
-the **starting totals**, so the totals, projections and tax outlook cover the
-whole year.
+## Before you push this anywhere
 
-**Try it:** https://blazinwingz.github.io/paycheck-ledger-demo/
+`src/seed.js` holds real pay data — gross, taxes, hourly rates, W-2 figures. It
+is **git-ignored**. Check that before your first push:
 
-Everything builds into one self-contained HTML file. No server, and no network
-requests once it loads.
+```bash
+git status --porcelain --ignored | grep seed.js   # should say "!! src/seed.js"
+```
 
-**Every figure in this repo is made up:** the pay rates, the salary, the
-withholding constants, and both sample years. None of it describes a real
-person's pay.
+`src/seed.example.js` is entirely invented — round numbers and one synthetic
+paycheck, nothing taken from a real stub. New machine:
 
+```bash
+cp src/seed.example.js src/seed.js
+```
 
-## What it does
-
-| Tab | What it does |
-|---|---|
-| **Log** | Every paycheck: gross, the four tax lines, benefits, retirement, savings. Also W-2 adjustment rows (stock sales) that count as income but carry no deductions. Shows what changed against the previous check. |
-| **Forecast** | Predicts the next check. Hourly: from hours worked, with a week-by-week log. Salaried: yearly salary ÷ checks a year, plus any bonus. A **What if** panel tries a different 401k (Roth or traditional, any percent), HSA, ESPP, savings or pay side by side with your setup, per check and per year, and can make it your setup. |
-| **Trends** | Year-end projection, effective rates, retirement and HSA pacing, and for hourly pay, hours and overtime. |
-| **Checks** | Audit rules over every row: tax lines that don't add up, Social Security or Medicare off their fixed rates, hours × rate that doesn't match gross, retirement off its usual percent, skipped pay periods. |
-| **Past years** | Whole-year totals from each year's W-2 and final stub, compared against the current year. |
-| **Tax outlook** | Projects the year-end federal and state position from the paychecks, including the federal overtime deduction for hourly pay. |
-| **Backup** | Export to JSON or CSV, restore from either, clear the ledger. |
-
+If you want your real figures on more than one machine, move `seed.js` yourself
+(a private gist, a password manager, a USB stick) rather than committing it. A
+public repo with `seed.js` in it publishes your income history permanently —
+deleting it later doesn't remove it from the git history.
 
 ## Getting started
 
 ```bash
 npm install
-npm run setup          # copies src/seed.example.js to src/seed.js, which the build reads
-npm test               # syntax, every tab renders, the pay model matches the sample data
 npm run build          # writes dist/paycheck-ledger.html
-npm run test:ui        # optional: needs `pip install playwright && playwright install chromium`
+npm test               # syntax, every tab renders, pay model still matches
 ```
 
-Open `dist/paycheck-ledger.html` in a browser.
+Open `dist/paycheck-ledger.html` in a browser, or publish it as a Claude
+artifact, where it saves entries to your account instead of one device.
 
+## The seven tabs
+
+| Tab | What it does |
+|---|---|
+| **Log** | Every paycheck. Gross, the four tax lines, benefits, retirement, hours. Also holds W-2 adjustment rows (ESPP sales), which carry earnings but no deductions. |
+| **Forecast** | Predicts the next check from hours worked. Pulls from the week log if it's filled in. Matches the real stub to the cent when the hours are right. A **What if** panel tries a different HSA, 401k (Roth or traditional), ESPP, savings share or rate side by side, per check and per year, and says what per-check HSA amount lands exactly on the yearly limit. |
+| **Trends** | Charts and year-to-date totals — gross, taxes, take-home, hours by category, effective rates. |
+| **Checks** | Runs every audit rule over every row and shows what's off. The tab label carries the flag count. |
+| **Past years** | 2022–2025 from W-2s and final stubs, plus the hourly rate history. A new rate on a paycheck or a past year joins the history by itself. |
+| **Tax outlook** | Projects the year-end federal and Kansas position, including the overtime deduction. |
+| **Backup** | Export to JSON or CSV, restore from either. A line under the tabs says when paychecks have changed since the last full (JSON) backup. |
+
+**One year at a time.** Every total covers the year of the latest paycheck. Log a
+January check and the ledger moves to the new year by itself: last year's rows
+stay in the Log (tagged "not in 2027 totals") and on the Checks tab, but out of
+the header, trends, forecast and tax outlook. Put the finished year on Past years
+from its W-2.
+
+## The audit rules
+
+The Checks tab is where most of the payroll knowledge lives. Each rule reads a
+row and flags what doesn't reconcile:
+
+- Tax sub-lines don't add up to the tax total
+- Medicare isn't 1.45% of taxable wages, or Social Security isn't 6.2%
+- Hours × rate doesn't equal gross — usually a rate change that wasn't recorded
+- The implied hourly rate doesn't match the rate on file
+- HSA plus dental doesn't match the benefits line
+- The stub's own check amount doesn't match what the lines compute to
+- Retirement came in at something other than 20%
+- An adjustment row has deductions on it, or a paycheck row has none
+- A gap in pay dates that looks like a missing paycheck
+
+Flags are `bad` (the math is wrong), `warn` (probably wrong, could be legitimate),
+or `info` (something is missing that would unlock more checks).
 
 ## Layout
 
 ```
-src/app.jsx              the whole app: pay model, audit rules, tabs, charts
-src/seed.example.js      the invented demo data and the formula constants
-src/profile.js           the setup, tax tables, withholding, pay dates, and the sample redone for any setup
-tools/gen-samples.mjs    regenerates the stored sample paychecks from the formulas
-src/entry.jsx            mounts the app
-src/utils.css            the utility classes app.jsx uses (generated)
-tools/build.mjs          bundles everything into one HTML file
-tools/gen-css.py         regenerates utils.css after adding class names
-tools/render-check.mjs   syntax check plus a server-render of every tab
-tests/run.mjs            every sample paycheck against the pay formulas
-tests/browser/           clicks every tab in both pay types in a real browser
+CHANGELOG.md           every published version and what changed; add to it when you publish
+CLAUDE.md              rules for Claude sessions working on this repo
+src/app.jsx            the whole app: model, audit rules, tabs, charts
+src/tax-tables.js      the year's federal and Kansas tables, and the IRS bracket method
+src/seed.js            your pay data and fitted constants (git-ignored)
+src/seed.example.js    placeholder version of the above
+src/utils.css          generated; the utility classes app.jsx uses
+tools/build.mjs        bundles everything into one HTML file
+tools/gen-css.py       regenerates utils.css after adding class names
+tools/render-check.mjs syntax check + server-render of every tab
+tests/run.mjs          the pay model against known-good paychecks
+tests/browser/         Playwright: saving, restore, two devices, dark mode
 ```
-
 
 ## The pay model
 
-Each paycheck is computed from your setup and a handful of constants in
-`src/seed.example.js` (`PAY`). Social Security and Medicare rates are law.
-Federal and state withholding work like payroll's **percentage method**: the
-check is scaled up to a year, run through the 2026 brackets after the standard
-deduction for your W-4 filing status, and divided back down. That holds in every
-bracket and at every pay frequency.
+Fitted to 18 real paychecks and checked against four W-2s. All of these are
+exact unless noted:
 
 | Line | Rule |
 |---|---|
-| Withholding base | gross − HSA − health premiums (both come off before every tax) |
-| Benefits | HSA + health premiums, added up for you |
+| Withholding base | gross − HSA − $0.93 of the dental premium |
 | Social Security | 6.2% of the base |
 | Medicare | 1.45% of the base |
-| Income tax base | the withholding base, less a **traditional** 401k (a Roth comes off after tax) |
-| Federal | (income tax base × checks a year − standard deduction) through the 2026 brackets, ÷ checks a year |
-| State | the same with the example state's deduction, exemption and two brackets |
-| 401k | the setup's percent of gross, or none |
-| ESPP | the setup's amount per check, or none |
-| Savings transfers | the setup's percent of **net** pay, or none |
-| Hourly gross | rate × hours, with overtime paid as straight time plus a half-time premium, **rounded separately** |
-| Salaried gross | yearly salary ÷ checks a year (52, 26, 24 or 12), plus any bonus |
+| Kansas | 5.58% of the base − $11.10 |
+| Federal | 22% of the base − $339.61 |
+| Roth 401k | 20% of gross |
+| ESPP | 10% of everything **except overtime**: regular, holiday, PTO and premium pay (the plan maximum). Exact on all 20 checks of 2026; flat $243.28 only on a plain 80-hour check |
+| Savings transfers | 20% of net pay |
+| Overtime | straight time plus a half-time premium, **rounded separately** |
 
-With no HSA, nothing comes off the top for it, so each check is taxed a little
-more. A traditional 401k does the opposite for income tax: it lowers federal and
-state withholding and W-2 Box 1, but not Social Security or Medicare.
+Details that cost real debugging time, kept here so they aren't rediscovered:
 
-The state tax tab models a generic **example state** (two brackets, a standard deduction and
-an exemption). The tax tables are 2026 figures and need replacing each January.
+- **The $0.93.** Taxable wages sit slightly above gross minus benefits because
+  employer-paid group-term life is imputed income, added each period. The W-2's
+  reconciliation page names it.
+- **Overtime rounding.** Rounding `hours × 1.5 × rate` once gives a different
+  cent than rounding the straight-time and half-time parts separately. Payroll
+  does the latter.
+- **Two overtime rates.** A week containing premium pay (`RgWagePrem`) raises
+  that week's regular rate, so the stub shows two overtime lines. Enter the
+  combined dollars; the qualifying premium is always overtime pay ÷ 3.
+- **The federal offset holds inside the 22% band.** Below roughly $2,653 of
+  taxable wages it hasn't been confirmed, and the app says so.
+- **January is different.** The first two checks of 2026 withheld more federal
+  than the formula gives — a W-4 change taking effect in February.
+- **The export goes through the `downloads` capability, deliberately.** An
+  ordinary blob download link navigates the sandboxed frame and leaves a white,
+  unresponsive page. `app.jsx` calls `claude.use("downloads")` and falls back to
+  copyable text when it isn't there. Don't "simplify" this back to an anchor tag.
 
-The federal overtime deduction (tax years 2025–2028) counts only the half-time
-premium, which is always one third of overtime pay. It's capped, unavailable when
-married filing separately, applies to income tax only, and the example state doesn't follow
-it. Salaried pay has no overtime, so the deduction is hidden in salary mode.
+## The overtime deduction
 
+Federal, from the 2025 law. The app implements all of this; it is written out
+here because none of it is obvious from the code alone.
 
-## How the demo is published
+- Only the **half-time premium** is deductible, not the whole overtime check.
+  Qualifying premium is always overtime pay ÷ 3.
+- Capped at **$12,500 single, $25,000 joint**. Married filing separately gets
+  **nothing** — the app zeroes `otCap` for that status.
+- It reduces **income tax only**. Social Security and Medicare still apply to
+  every dollar of overtime.
+- **Kansas doesn't follow it.** The state calculation ignores the deduction.
+- It covers **tax years 2025 through 2028** and then sunsets unless extended.
+- Employers weren't required to report qualifying overtime on 2025 W-2s, so a
+  2025 return may have missed it. 2026 W-2s will have it on its own line.
 
-Every upload runs the tests (`.github/workflows/ci.yml`). When they pass on the
-main branch, the built page is published to GitHub Pages, at the link above.
-The page is identical to the Claude artifact demo.
+## When this goes stale
 
-The demo is published as a Claude artifact **with no runtime capabilities**: no
-account storage, no file downloads. Visitors' entries save to their own browser
-only, and Export shows copyable text instead of downloading a file. That's
-deliberate, so a shared link never asks a visitor for permissions.
+The tax figures live in **`src/tax-tables.js`** (2026: Rev. Proc. 2025-32 and
+the Kansas rates). **Replace them each January and bump `TAX_YEAR`.** Until then
+the Tax outlook warns that it's using last year's tables.
 
-So a visitor's ledger lives in that one browser on that one device. Clearing
-browsing data or using a private window loses it, and other devices never see
-it. The page says so, and reminds them to back up when anything has changed
-since their last backup. A backup restores the whole ledger anywhere.
+| Constant | 2026 value |
+|---|---|
+| Federal standard deduction | $16,100 single / $32,200 joint |
+| Kansas standard deduction | $3,605 single |
+| Kansas personal exemption | $9,160, plus $2,320 per dependent |
+| Kansas brackets | 5.2% to $23,000, then 5.58% |
+| Overtime deduction cap | $12,500 single / $25,000 joint |
 
-The code still knows how to use account storage and downloads (the original app
-syncs between devices that way). It falls back cleanly when they aren't there.
+Two other things drift on a schedule:
 
+- **The fitted federal offset** ($339.61) isn't arbitrary: it's the IRS
+  percentage method for a single filer with the standard deduction, inside the
+  22% bracket. It works out as `(0.22 × (std deduction + start of the 22% bracket)
+  − tax at the start of the 22% bracket) ÷ 26`. For 2026 that's
+  `(0.22 × (16,100 + 50,400) − 5,800) ÷ 26 = 339.615`. So for a new year, compute
+  it from the new tables, then confirm it against the first two stubs. If they
+  don't match, the W-4 changed (as in January 2026).
+- **Below the 22% band** (a short check with no overtime) the app uses the IRS
+  bracket method (`fedByBrackets` in `tax-tables.js`) instead of the fitted line.
+  On the real stubs it lands within a cent of every check; the fitted line is
+  exact on all but one.
+- **HSA and dental are stored as numbers, and benefits are their sum.** Typed
+  form fields arrive as text ("340.00"); adding text to a number glues it on
+  instead of adding, which showed up as "$NaN" in the HSA panel. Totals wrap
+  every field in `n()`, and `save()` stores HSA and dental as numbers. Rows that
+  arrived without HSA and dental (an old CSV) broke the HSA panel the same way;
+  that data was repaired in October 2026.
+- **The employer HSA deposit** ($500) lands in early December — 12/10 in 2024,
+  12/8 in 2025 — and isn't tied to a payroll date. Mark it received when it
+  shows up.
+
+## Storage
+
+Published as a Claude artifact, entries save privately to the viewer's account,
+so the same ledger opens on a phone and a PC. Opened as a plain file, it falls
+back to that browser's storage and says so.
+
+Two devices can both be open. A save re-reads the stored copy and merges per
+paycheck and per setting, keeping only what that device changed, so a stale tab
+can't overwrite work done elsewhere.
+
+## Tests
+
+`npm test` needs no browser and is the one to run before publishing: it catches
+syntax errors, a tab that throws (the white-screen case), and any drift in the
+pay model.
+
+`npm run test:ui` needs `pip install playwright && playwright install chromium`
+and drives the built page: saving, full backup and restore, two devices editing
+at once, dark mode in all four states, and the week log feeding the forecast.
 
 ## Not tax advice
 
-The tax tab estimates a year-end position from paychecks and published tables.
-It knows nothing about credits, other income, or anything not on a stub.
+The tax tab estimates a year-end position from your own paychecks and published
+2026 tables. It knows nothing about credits, other income, or anything not on a
+stub. Take it to whoever prepares your return.
